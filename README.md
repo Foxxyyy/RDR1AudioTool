@@ -1,12 +1,14 @@
-<div align="center">
-    <h1>RDR2 Audio Tool</h1>
-    This program is for editing the contents of RDR2 AWC audio containers.
-</div>
-<br>
-<br>
- 
-I would like to thank [Ked](https://github.com/Ked29) for helping to contribute to the project when I was too busy working on this project.
+# RDR1 Audio Tool (PC)
 
-Not finished. All third party code and code that is not mine is listed in LICENSE.txt 
- 
-Program is based off of CodeWalker AWC editing code.
+This tool allows you to edit the contents of RDR1 AWC audio containers **(PC, Nintendo Switch and PS4)**.
+
+It is based on the **RDR2 Audio Tool**, originally created by [WesternGamer](https://github.com/WesternGamer) and [Ked29](https://github.com/Ked29).  
+
+**MSADPCM** is the primary codec used in RDR1 (speeches, ambient sounds, etc).
+<br>
+**OPUS** codec isn't yet implemented in the tool but will be available soon (songs, cutscenes).
+
+## Credits & Licensing
+
+* Original AWC editing code by [dexyfex](https://github.com/dexyfex) from [CodeWalker](https://github.com/dexyfex/CodeWalker).  
+* All third-party code and external contributions are listed in **LICENSE.txt**.
