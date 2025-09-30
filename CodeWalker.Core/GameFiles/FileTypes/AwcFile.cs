@@ -1,5 +1,4 @@
 ﻿//Codewalker AWC File loader / writer code.
-//Modified by Western Gamer for RDR1 then Im Foxxyyy for RDR1
 
 using CodeWalker.Core.Utils;
 using NAudio.Wave;
@@ -96,9 +95,9 @@ namespace CodeWalker.GameFiles
                 return; //nothing to do, not enough data...
             }
 
-            Endianess endianess = Endianess.LittleEndian;
-
+            var endianess = Endianess.LittleEndian;
             Magic = BitConverter.ToUInt32(data, 0);
+
             if (Magic != 0x54414441 && Magic != 0x41444154)
             {
                 if (data.Length % 4 == 0)
@@ -116,29 +115,25 @@ namespace CodeWalker.GameFiles
                 default:
                     ErrorMessage = "Unexpected Magic 0x" + Magic.ToString("X");
                     return;
-
                 case 0x54414441:
                     endianess = Endianess.LittleEndian;
                     break;
-
                 case 0x41444154:
                     endianess = Endianess.BigEndian;
                     break;
             }
 
-            using (MemoryStream ms = new MemoryStream(data))
+            using (var ms = new MemoryStream(data))
             {
-                DataReader r = new DataReader(ms, endianess);
-
+                var r = new DataReader(ms, endianess);
                 Read(r);
             }
         }
 
         public byte[] Save()
         {
-            MemoryStream s = new MemoryStream();
-            DataWriter w = new DataWriter(s);
-
+            var s = new MemoryStream();
+            var w = new DataWriter(s);
             Write(w);
 
             var buf = new byte[s.Length];
@@ -164,13 +159,6 @@ namespace CodeWalker.GameFiles
                 }
             }
 
-            //if ((Flags >> 8) != 0xFF)
-            //{ }//no hit
-
-            //var infoStart = 16 + (ChunkIndicesFlag ? (StreamCount * 2) : 0);
-            //if (r.Position != infoStart)
-            //{ }//no hit
-
             var infos = new List<AwcStreamInfo>();
             var chunks = new List<AwcChunkInfo>();
 
@@ -180,6 +168,7 @@ namespace CodeWalker.GameFiles
                 info.Read(r);
                 infos.Add(info);
             }
+
             for (int i = 0; i < StreamCount; i++)
             {
                 var info = infos[i];
@@ -191,18 +180,11 @@ namespace CodeWalker.GameFiles
                     info.Chunks[j] = chunk;
                 }
             }
+
             StreamInfos = infos.ToArray();
             ChunkInfos = chunks.ToArray();
 
-            //var dataOffset = infoStart + StreamCount * 4;
-            //foreach (var info in infos) dataOffset += (int)info.ChunkCount * 8;
-            //if (dataOffset != DataOffset)
-            //{ }//no hit
-            //if (r.Position != DataOffset)
-            //{ }//no hit
-
             var streams = new List<AwcStream>();
-
             for (int i = 0; i < StreamCount; i++)
             {
                 var info = StreamInfos[i];
@@ -226,7 +208,13 @@ namespace CodeWalker.GameFiles
             StreamCount = StreamInfos?.Length ?? 0;
             var infoStart = 16 + (ChunkIndicesFlag ? (StreamCount * 2) : 0);
             var dataOffset = infoStart + StreamCount * 4;
-            foreach (var info in StreamInfos) dataOffset += (int)info.ChunkCount * 8;
+
+            foreach (var info in StreamInfos)
+            {
+                dataOffset += (int)info.ChunkCount * 8;
+            }
+
+            var chunks = GetSortedChunks();
             DataOffset = dataOffset;
 
             w.Write(Magic);
@@ -243,12 +231,14 @@ namespace CodeWalker.GameFiles
                 }
             }
 
+            //Write stream infos
             for (int i = 0; i < StreamCount; i++)
             {
                 var info = StreamInfos[i];
                 info.Write(w);
             }
 
+            //Write chunk infos
             for (int i = 0; i < StreamCount; i++)
             {
                 var info = StreamInfos[i];
@@ -259,7 +249,7 @@ namespace CodeWalker.GameFiles
                 }
             }
 
-            var chunks = GetSortedChunks();
+            //Write chunk data
             foreach (var chunk in chunks)
             {
                 var chunkinfo = chunk.ChunkInfo;
@@ -317,17 +307,14 @@ namespace CodeWalker.GameFiles
                     stream.ReadXml(inode, wavfolder);
                     slist.Add(stream);
 
-                    if (MultiChannelFlag && (stream.StreamFormatChunk != null) && (stream.Hash == 0))
+                    if (MultiChannelFlag && (stream.StreamFormatChunk != null || stream.VorbisFormatChunk != null) && stream.Hash == 0)
                     {
                         MultiChannelSource = stream;
                     }
                 }
 
-                //slist.Sort((a, b) => a.Name.CompareTo(b.Name));
-                //slist.Sort((a, b) => a.Hash.Hash.CompareTo(b.Hash.Hash));
                 Streams = slist.ToArray();
                 StreamCount = Streams?.Length ?? 0;
-
                 MultiChannelSource?.CompactMultiChannelSources(Streams);
             }
 
@@ -358,8 +345,8 @@ namespace CodeWalker.GameFiles
             var totalBytes = pcmAudioData.Length; //Must have a length multiple of 4
             var leftData = new byte[pcmAudioData.Length / 2];
             var rightData = new byte[pcmAudioData.Length / 2];
+            var position = 0;
 
-            int position = 0;
             for (int n = 0; n < totalBytes; n += 4)
             {
                 //L sample
@@ -380,69 +367,38 @@ namespace CodeWalker.GameFiles
             byte[] rightCommentData = null;
             byte[] rightCodebookData = null;
 
-            if (targetCodec == AwcCodecType.ADPCM)
-            {
-                leftData = ADPCMCodec.EncodeADPCM(leftData, (int)sampleCount);
-                rightData = ADPCMCodec.EncodeADPCM(rightData, (int)sampleCount);
-                leftStreamIdData = leftCommentData = leftCodebookData = null;
-                rightStreamIdData = rightCommentData = rightCodebookData = null;
-            }
-            else if (targetCodec == AwcCodecType.VORBIS)
-            {
-                leftData = VorbisHelper.Encode(leftData, 1, sampleRate, out leftStreamIdData, out leftCommentData, out leftCodebookData);
-                rightData = VorbisHelper.Encode(rightData, 1, sampleRate, out rightStreamIdData, out rightCommentData, out rightCodebookData);
-                //throw new NotImplementedException("Vorbis support is not implemented");
-            }
+            var leftStream = Streams.FirstOrDefault(s => s.Hash == leftHash);
+            var rightStream = Streams.FirstOrDefault(s => s.Hash == rightHash);
 
-            AwcStream rightStream = null;
-            foreach (AwcStream stream in Streams)
+            if (leftStream == null || rightStream == null)
             {
-                if (stream.Hash == rightHash)
-                {
-                    rightStream = stream;
-                    break;
-                }
-            }
-
-            AwcStream leftStream = null;
-            foreach (AwcStream stream in Streams)
-            {
-                if (stream.Hash == leftHash)
-                {
-                    leftStream = stream;
-                    break;
-                }
+                return;
             }
 
             if (targetCodec == AwcCodecType.ADPCM || targetCodec == AwcCodecType.PCM)
             {
+                if (targetCodec == AwcCodecType.ADPCM)
+                {
+                    leftData = ADPCMCodec.EncodeADPCM(leftData, (int)sampleCount);
+                    rightData = ADPCMCodec.EncodeADPCM(rightData, (int)sampleCount);
+                }
                 ReplacePCM(ref rightStream, sampleCount, sampleRate, rightData, targetCodec, MultiChannelFlag);
                 ReplacePCM(ref leftStream, sampleCount, sampleRate, leftData, targetCodec, MultiChannelFlag);
             }
             else if (targetCodec == AwcCodecType.VORBIS)
             {
+                leftData = VorbisHelper.Encode(leftData, 1, sampleRate, out leftStreamIdData, out leftCommentData, out leftCodebookData);
+                rightData = VorbisHelper.Encode(rightData, 1, sampleRate, out rightStreamIdData, out rightCommentData, out rightCodebookData);
+
                 ReplaceVorbis(ref leftStream, sampleCount, sampleRate, leftData, leftStreamIdData, leftCommentData, leftCodebookData, MultiChannelFlag);
                 ReplaceVorbis(ref rightStream, sampleCount, sampleRate, rightData, rightStreamIdData, rightCommentData, rightCodebookData, MultiChannelFlag);
             }
 
+            //Push updated streams back
             for (int i = 0; i < Streams.Length; i++)
             {
-                var str = Streams[i];
-
-                if (str.Hash == rightHash)
-                {
-                    Streams[i] = rightStream;
-                }
-            }
-
-            for (int i = 0; i < Streams.Length; i++)
-            {
-                var str = Streams[i];
-
-                if (str.Hash == leftHash)
-                {
-                    Streams[i] = leftStream;
-                }
+                if (Streams[i].Hash == leftHash) Streams[i] = leftStream;
+                if (Streams[i].Hash == rightHash) Streams[i] = rightStream;
             }
         }
 
@@ -507,7 +463,7 @@ namespace CodeWalker.GameFiles
             }
             else if (targetCodec == AwcCodecType.VORBIS)
             {
-                throw new NotImplementedException("Vorbis support is not implemented");
+                throw new NotImplementedException("Vorbis support is not implemented for single streams, use PCM/ADPCM for RDR2 or MSADPCM for RDR1");
             }
 
             AwcStream targetStream = null;
@@ -545,7 +501,7 @@ namespace CodeWalker.GameFiles
             }
         }
 
-        public void ReplacePCM(ref AwcStream stream, uint sampleCount, uint sampleRate, byte[] pcmAudioData, AwcCodecType codecType, bool isMultiChannel = false)
+        public static void ReplacePCM(ref AwcStream stream, uint sampleCount, uint sampleRate, byte[] pcmAudioData, AwcCodecType codecType, bool isMultiChannel = false)
         {
             if (stream.VorbisChunk != null)
             {
@@ -573,30 +529,55 @@ namespace CodeWalker.GameFiles
             stream.DataChunk.Data = pcmAudioData;
         }
 
-        public void ReplaceVorbis(ref AwcStream stream, uint sampleCount, uint sampleRate, byte[] audioData, byte[] streamIdData, byte[] commentData, byte[] codebookData, bool isMultiChannel = false)
+        public static void ReplaceVorbis(ref AwcStream stream, uint sampleCount, uint sampleRate, byte[] audioData, byte[] streamIdData, byte[] commentData, byte[] codebookData, bool isMultiChannel = false)
         {
+            //Remove old format chunk
+            var vorbisFormat = stream.VorbisFormatChunk != null;
             if (stream.FormatChunk != null)
-            {
                 stream.FormatChunk = null;
-            }
+            if (vorbisFormat)
+                stream.VorbisFormatChunk = null;
 
-            List<AwcChunk> chunks = stream.Chunks.ToList();
+            var chunks = stream.Chunks.ToList();
             stream.Chunks = null;
 
-            for (int p = 0; p < chunks.Count; p++)
-            {
-                if (chunks[p].GetType() == typeof(AwcFormatChunk))
-                {
-                    chunks.Remove(chunks[p]);
-                }
-            }
+            //Drop any old format chunks
+            chunks.RemoveAll(c => c is AwcFormatChunk);
 
-            chunks.ToArray();
+            //Update format info
             if (!isMultiChannel)
             {
-                stream.FormatChunk.Samples = sampleCount;
-                stream.FormatChunk.SamplesPerSecond = (ushort)sampleRate;
-                stream.FormatChunk.Codec = AwcCodecType.VORBIS;
+                if (vorbisFormat)
+                {
+                    var vorbisChunk = new AwcVorbisChunk(new AwcChunkInfo() { Type = AwcChunkType.vorbisheader })
+                    {
+                        DataSection1 = streamIdData,
+                        DataSection2 = commentData,
+                        DataSection3 = codebookData
+                    };
+
+                    stream.VorbisFormatChunk ??= new AwcVorbisFormatChunk(new AwcChunkInfo() { Type = AwcChunkType.format_vorbis })
+                    {
+                        LoopPoint = -1,
+                        Unk2 = -1,
+                        Samples = sampleCount,
+                        SamplesPerSecond = (ushort)sampleRate,
+                        VorbisChunk = vorbisChunk,
+                        Codec = AwcCodecType.VORBIS
+                    };
+                    chunks.Add(stream.VorbisFormatChunk);
+                }
+                else
+                {
+                    stream.FormatChunk ??= new AwcFormatChunk(new AwcChunkInfo() { Type = AwcChunkType.format })
+                    {
+                        LoopPoint = -1,
+                        Samples = sampleCount,
+                        SamplesPerSecond = (ushort)sampleRate,
+                        Codec = AwcCodecType.VORBIS
+                    };
+                    chunks.Add(stream.FormatChunk);
+                }
             }
             else
             {
@@ -605,6 +586,7 @@ namespace CodeWalker.GameFiles
                 stream.StreamFormat.Codec = AwcCodecType.VORBIS;
             }
 
+            //Replace or add Vorbis header chunk
             if (stream.VorbisChunk == null)
             {
                 stream.VorbisChunk = new AwcVorbisChunk(new AwcChunkInfo() { Type = AwcChunkType.vorbisheader })
@@ -739,27 +721,16 @@ namespace CodeWalker.GameFiles
         public void BuildPeakChunks()
         {
             if (Streams == null) return;
-
             foreach (var stream in Streams)
             {
-                if (stream.FormatChunk == null)
-                { continue; } // peak chunk is always null here
-                if (stream.FormatChunk.Peak == null)
-                { continue; } //rare, only in boar_near.awc
-                //if (stream.FormatChunk.PeakUnk != 0)
-                //{ }//some hits??
-                //if ((stream.PeakChunk != null) && (stream.FormatChunk.Peak == null))
-                //{ }//no hit
+                if (stream.FormatChunk == null || stream.VorbisFormatChunk == null) continue; //Peak chunk is always null here
+                if (stream.FormatChunk.Peak == null || stream.VorbisFormatChunk.Peak == null) continue; //Rare, only in boar_near.awc
 
                 var pcmData = stream.GetPcmData();
-                var codec = stream.FormatChunk.Codec;
-                var smpCount = stream.FormatChunk.Samples;
-                //var peak0 = stream.FormatChunk.PeakVal;//orig value for comparison
-                //var peakvals0 = stream.PeakChunk?.Data;//orig values for comparison
+                var codec = stream.VorbisFormatChunk?.Codec ?? stream.FormatChunk.Codec;
+                var smpCount = stream.VorbisFormatChunk?.Samples ?? stream.FormatChunk.Samples;
                 var peakSize = 4096;
                 var peakCount = (smpCount - peakSize) / peakSize;
-                //if (peakCount != (peakvals0?.Length ?? 0))
-                //{ }//no hit
                 var peakvals = new ushort[peakCount];
 
                 ushort getSample(int i)
@@ -782,42 +753,15 @@ namespace CodeWalker.GameFiles
                 }
 
                 var peak = getPeak(0);
-                stream.FormatChunk.PeakVal = peak;
-
-                //// testing
-                //if (peak != peak0)
-                //{
-                //    if (codec == AwcCodecType.PCM)
-                //    { }//just 1 hit here for a tiny file in melee.awc
-                //    if (codec == AwcCodecType.ADPCM)
-                //    {
-                //        var diff = Math.Abs(peak - peak0);
-                //        if (diff > 25000)
-                //        { }//no hit
-                //    }
-                //}
+                if (stream.VorbisFormatChunk != null)
+                    stream.VorbisFormatChunk.PeakVal = peak;
+                else
+                    stream.FormatChunk.PeakVal = peak;
 
                 for (int n = 0; n < peakCount; n++)
                 {
                     var peakn = getPeak(n + 1);
                     peakvals[n] = peakn;
-
-                    //// testing
-                    //if (peakvals0 != null)
-                    //{
-                    //    var peakc = peakvals0[n];
-                    //    if (peakn != peakc)
-                    //    {
-                    //        if (codec == AwcCodecType.PCM)
-                    //        { }//no hit
-                    //        if (codec == AwcCodecType.ADPCM)
-                    //        {
-                    //            var diff = Math.Abs(peakn - peakc);
-                    //            if (diff > 33000)
-                    //            { }//no hit
-                    //        }
-                    //    }
-                    //}
                 }
 
                 if (stream.PeakChunk == null)
@@ -856,45 +800,30 @@ namespace CodeWalker.GameFiles
 
             var inds = new List<ushort>();
             ushort ind = 0;
+
             foreach (var stream in Streams)
             {
                 inds.Add(ind);
                 ind += (ushort)(stream.Chunks?.Length ?? 0);
             }
 
-            //if (ChunkIndices != null)
-            //{
-            //    if (ChunkIndices.Length == inds.Count)
-            //    {
-            //        for (int i = 0; i < inds.Count; i++)
-            //        {
-            //            if (inds[i] != ChunkIndices[i])
-            //            { }//no hit
-            //        }
-            //    }
-            //    else
-            //    { }//no hit
-            //}
-
             if (ChunkIndicesFlag)
-            {
                 ChunkIndices = inds.ToArray();
-            }
             else
-            {
                 ChunkIndices = null;
-            }
         }
 
         public void BuildStreamInfos()
         {
             var streaminfos = new List<AwcStreamInfo>();
             var chunkinfos = new List<AwcChunkInfo>();
+
             if (Streams != null)
             {
                 var streamCount = Streams.Length;
                 var infoStart = 16 + (ChunkIndicesFlag ? (streamCount * 2) : 0);
                 var dataOffset = infoStart + streamCount * 4;
+
                 foreach (var stream in Streams)
                 {
                     dataOffset += (stream?.Chunks?.Length ?? 0) * 8;
@@ -906,11 +835,13 @@ namespace CodeWalker.GameFiles
                     var chunkinfo = chunk.ChunkInfo;
                     var size = chunk.ChunkSize;
                     var align = chunkinfo.Align;
+
                     if (align > 0)
                     {
                         var padc = (align - (dataOffset % align)) % align;
                         dataOffset += padc;
                     }
+
                     chunkinfo.Size = size;
                     chunkinfo.Offset = dataOffset;
                     dataOffset += size;
@@ -921,6 +852,7 @@ namespace CodeWalker.GameFiles
                     var streaminfo = stream.StreamInfo;
                     streaminfos.Add(streaminfo);
                     chunkinfos.Clear();
+
                     if (stream.Chunks != null)
                     {
                         foreach (var chunk in stream.Chunks)
@@ -940,6 +872,7 @@ namespace CodeWalker.GameFiles
         {
             StreamDict = new Dictionary<uint, AwcStream>();
             if (Streams == null) return;
+
             foreach (var stream in Streams)
             {
                 StreamDict[stream.Hash] = stream;
@@ -1001,28 +934,23 @@ namespace CodeWalker.GameFiles
                 {
                     case AwcChunkType.data:
                         return 5;
-
                     case AwcChunkType.mid:
                         return 3;
-
                     case AwcChunkType.markers:
                     case AwcChunkType.granulargrains:
                     case AwcChunkType.granularloops:
                     case AwcChunkType.animation:
                     case AwcChunkType.gesture:
                         return 2;
-
                     case AwcChunkType.seektable:
                         return 0;
-
                     case AwcChunkType.peak:
                     case AwcChunkType.format:
                     case AwcChunkType.streamformat:
+                    case AwcChunkType.format_vorbis:
                         return 1;
-
                     case AwcChunkType.vorbisheader:
                         return 4;
-
                     default:
                         break;
                 }
@@ -1090,6 +1018,7 @@ namespace CodeWalker.GameFiles
         public AwcStreamFormatChunk StreamFormatChunk { get; set; }
         public AwcSeekTableChunk SeekTableChunk { get; set; }
         public AwcVorbisChunk VorbisChunk { get; set; }
+        public AwcVorbisFormatChunk VorbisFormatChunk { get; set; }
         public AwcStream[] ChannelStreams { get; set; }
         public AwcStream StreamSource { get; set; }
         public AwcStreamFormat StreamFormat { get; set; }
@@ -1100,7 +1029,7 @@ namespace CodeWalker.GameFiles
         {
             get
             {
-                return FormatChunk?.SamplesPerSecond ?? StreamFormat?.SamplesPerSecond ?? 0;
+                return FormatChunk?.SamplesPerSecond ?? StreamFormat?.SamplesPerSecond ?? VorbisFormatChunk?.SamplesPerSecond ?? 0;
             }
         }
 
@@ -1108,7 +1037,7 @@ namespace CodeWalker.GameFiles
         {
             get
             {
-                return (int)(FormatChunk?.Samples ?? StreamFormat?.Samples ?? 0);
+                return (int)(FormatChunk?.Samples ?? StreamFormat?.Samples ?? VorbisFormatChunk?.Samples ?? 0);
             }
         }
 
@@ -1201,6 +1130,12 @@ namespace CodeWalker.GameFiles
                     hz = StreamFormat.SamplesPerSecond;
                 }
 
+                if (VorbisFormatChunk != null)
+                {
+                    fc = VorbisFormatChunk.Codec;
+                    hz = VorbisFormatChunk.SamplesPerSecond;
+                }
+
                 string codec = fc.ToString();
                 switch (fc)
                 {
@@ -1226,13 +1161,11 @@ namespace CodeWalker.GameFiles
             {
                 var fc = AwcCodecType.PCM;
                 if (FormatChunk != null)
-                {
                     fc = FormatChunk.Codec;
-                }
                 if (StreamFormat != null)
-                {
                     fc = StreamFormat.Codec;
-                }
+                if (VorbisFormatChunk != null)
+                    fc = VorbisFormatChunk.Codec;
                 return fc;
             }
         }
@@ -1242,6 +1175,7 @@ namespace CodeWalker.GameFiles
             get
             {
                 if (FormatChunk != null) return (float)FormatChunk.Samples / FormatChunk.SamplesPerSecond;
+                if (VorbisFormatChunk != null) return (float)VorbisFormatChunk.Samples / VorbisFormatChunk.SamplesPerSecond;
                 if (StreamFormat != null) return (float)StreamFormat.Samples / StreamFormat.SamplesPerSecond;
                 if ((StreamFormatChunk != null) && (StreamFormatChunk.Channels?.Length > 0))
                 {
@@ -1268,14 +1202,9 @@ namespace CodeWalker.GameFiles
         {
             get
             {
-                if (MidiChunk?.Data != null)
-                {
-                    return MidiChunk.Data.Length;
-                }
-                if (DataChunk?.Data != null)
-                {
-                    return DataChunk.Data.Length;
-                }
+                if (MidiChunk?.Data != null) return MidiChunk.Data.Length;
+                if (DataChunk?.Data != null) return DataChunk.Data.Length;
+
                 if (StreamSource != null)
                 {
                     int c = 0;
@@ -1460,7 +1389,6 @@ namespace CodeWalker.GameFiles
             {
                 case AwcChunkType.data: return new AwcDataChunk(info);
                 case AwcChunkType.format: return new AwcFormatChunk(info);
-                case AwcChunkType.animation: return new AwcAnimationChunk(info);
                 case AwcChunkType.peak: return new AwcPeakChunk(info);
                 case AwcChunkType.mid: return new AwcMIDIChunk(info);
                 case AwcChunkType.gesture: return new AwcGestureChunk(info);
@@ -1470,6 +1398,10 @@ namespace CodeWalker.GameFiles
                 case AwcChunkType.streamformat: return new AwcStreamFormatChunk(info);
                 case AwcChunkType.seektable: return new AwcSeekTableChunk(info);
                 case AwcChunkType.vorbisheader: return new AwcVorbisChunk(info);
+                case AwcChunkType.format_vorbis: return new AwcVorbisFormatChunk(info);
+                case AwcChunkType.animation:
+                case AwcChunkType.rave_anim_data:
+                    return new AwcAnimationChunk(info);
             }
             return null;
         }
@@ -1482,7 +1414,6 @@ namespace CodeWalker.GameFiles
                 {
                     if (chunk is AwcDataChunk dataChunk) DataChunk = dataChunk;
                     if (chunk is AwcFormatChunk formatChunk) FormatChunk = formatChunk;
-                    if (chunk is AwcAnimationChunk animChunk) AnimationChunk = animChunk;
                     if (chunk is AwcMarkersChunk markersChunk) MarkersChunk = markersChunk;
                     if (chunk is AwcGestureChunk gestureChunk) GestureChunk = gestureChunk;
                     if (chunk is AwcPeakChunk peakChunk) PeakChunk = peakChunk;
@@ -1492,13 +1423,15 @@ namespace CodeWalker.GameFiles
                     if (chunk is AwcGranularGrainsChunk ggChunk) GranularGrainsChunk = ggChunk;
                     if (chunk is AwcGranularLoopsChunk glChunk) GranularLoopsChunk = glChunk;
                     if (chunk is AwcVorbisChunk vorbisChunk) VorbisChunk = vorbisChunk;
+                    if (chunk is AwcVorbisFormatChunk vorbisFormatChunk) VorbisFormatChunk = vorbisFormatChunk;
+                    if (chunk is AwcAnimationChunk animChunk) AnimationChunk = animChunk;
                 }
             }
         }
 
         public void DecodeData(Endianess endianess)
         {
-            //create multichannel blocks and decrypt data where necessary
+            //Create multichannel blocks and decrypt data where necessary
             if (DataChunk?.Data != null)
             {
                 if (Awc.MultiChannelFlag)
@@ -1508,6 +1441,7 @@ namespace CodeWalker.GameFiles
                     var bcount = (int)(StreamFormatChunk?.BlockCount ?? 0);
                     var blocksize = (int)(StreamFormatChunk?.BlockSize ?? 0);
                     var blist = new List<AwcStreamDataBlock>();
+
                     for (int b = 0; b < bcount; b++)
                     {
                         int srcoff = b * blocksize;
@@ -1515,6 +1449,7 @@ namespace CodeWalker.GameFiles
                         int blen = Math.Max(Math.Min(blocksize, DataChunk.Data.Length - srcoff), 0);
                         var bdat = new byte[blen];
                         Buffer.BlockCopy(DataChunk.Data, srcoff, bdat, 0, blen);
+
                         if (Awc.MultiChannelEncryptFlag && !Awc.WholeFileEncrypted)
                         {
                             throw new NotSupportedException("File is encrypted, contact the developer for help.");
@@ -1533,8 +1468,6 @@ namespace CodeWalker.GameFiles
                     }
                 }
             }
-            //if ((Data != null) && awc.WholeFileEncrypted && awc.MultiChannelFlag)
-            //{ }//no hit
         }
 
         public void AssignMultiChannelSources(AwcStream[] streams)
@@ -1548,19 +1481,16 @@ namespace CodeWalker.GameFiles
                     var id = stream.StreamInfo?.Id ?? 0;
                     var srcind = 0;
                     var chancnt = StreamFormatChunk?.Channels?.Length ?? 0;
-                    var found = false;
+
                     for (int ind = 0; ind < chancnt; ind++)
                     {
                         var mchan = StreamFormatChunk.Channels[ind];
                         if (mchan.Id == id)
                         {
                             srcind = ind;
-                            found = true;
                             break;
                         }
                     }
-                    if (!found)
-                    { }//no hit
 
                     stream.StreamSource = this;
                     stream.StreamFormat = (srcind < chancnt) ? StreamFormatChunk.Channels[srcind] : null;
@@ -1575,6 +1505,7 @@ namespace CodeWalker.GameFiles
         {
             var chanlist = new List<AwcStreamFormat>();
             var chandatas = new List<byte[]>();
+
             for (int i = 0; i < (streams?.Length ?? 0); i++)
             {
                 var stream = streams[i];
@@ -1584,10 +1515,11 @@ namespace CodeWalker.GameFiles
                     chandatas.Add(stream.DataChunk?.Data);
                 }
             }
+
             StreamFormatChunk.Channels = chanlist.ToArray();
             StreamFormatChunk.ChannelCount = (uint)chanlist.Count;
 
-            //figure out how many smaller blocks fit in the larger block
+            //Figure out how many smaller blocks fit in the larger block
             var chancount = chanlist.Count;
             var blocksize = (int)(StreamFormatChunk?.BlockSize ?? 1032192);
             var hdrsize = 96 * chancount + (blocksize / 512) + 1024;
@@ -1595,10 +1527,11 @@ namespace CodeWalker.GameFiles
             var smblockspace = (blocksize - hdrsize) / 2048;
             var smblockcount = smblockspace / chancount;
 
-            //split the channel datas into their blocks
+            //Split the channel datas into their blocks
             var streamblocks = new List<AwcStreamDataBlock>();
             var seektable = new List<uint>();
             var chansmpoffs = new List<int>();
+
             for (int c = 0; c < chancount; c++)
             {
                 var chaninfo = chanlist[c];
@@ -1606,41 +1539,52 @@ namespace CodeWalker.GameFiles
                 var cdlen = chandata?.Length ?? 0;
                 var totsmblockcount = (cdlen / 2048) + (((cdlen % 2048) != 0) ? 1 : 0);
                 var totlgblockcount = (totsmblockcount / smblockcount) + (((totsmblockcount % smblockcount) != 0) ? 1 : 0);
+
                 for (int i = streamblocks.Count; i < totlgblockcount; i++)
                 {
-                    var blk = new AwcStreamDataBlock();
-                    blk.ChannelInfo = StreamFormatChunk;
-                    blk.Channels = new AwcStreamDataChannel[chancount];
-                    blk.ChannelCount = (uint)chancount;
-                    blk.SampleOffset = i * smblockcount * 4088;
+                    var blk = new AwcStreamDataBlock
+                    {
+                        ChannelInfo = StreamFormatChunk,
+                        Channels = new AwcStreamDataChannel[chancount],
+                        ChannelCount = (uint)chancount,
+                        SampleOffset = i * smblockcount * 4088
+                    };
                     streamblocks.Add(blk);
                     seektable.Add((uint)blk.SampleOffset);
                 }
 
                 chansmpoffs.Clear();
                 var samplesrem = (int)chaninfo.Samples + 1;
+
                 for (int i = 0; i < totsmblockcount; i++)
                 {
                     chansmpoffs.Add(i * 4088);
                     var blkcnt = chansmpoffs.Count;
+
                     if ((blkcnt == smblockcount) || (i == totsmblockcount - 1))
                     {
                         var lgblockind = i / smblockcount;
                         var blkstart = lgblockind * smblockcount;
                         var blk = streamblocks[lgblockind];
+                        
                         var chan = new AwcStreamDataChannel(StreamFormatChunk, c);
-                        var smpcnt = blkcnt * 4088;
-                        var bytcnt = blkcnt * 2048;
+                        var smpcnt = smblockcount * 4088;
+                        var bytcnt = smblockcount * 2048;
                         var srcoff = blkstart * 2048;
                         var srccnt = Math.Min(bytcnt, cdlen - srcoff);
+                        
                         var data = new byte[bytcnt];
-                        Buffer.BlockCopy(chandata, srcoff, data, 0, srccnt);
+                        if (srccnt > 0)
+                        {
+                            Buffer.BlockCopy(chandata, srcoff, data, 0, srccnt);
+                        }
+
                         chan.Data = data;
                         chan.SampleOffsets = chansmpoffs.ToArray();
                         chan.SampleCount = Math.Min(smpcnt, samplesrem);
-                        chan.BlockCount = blkcnt;
-                        chan.StartBlock = (c * smblockcount);
-
+                        chan.BlockCount = smblockcount;
+                        chan.StartBlock = c * smblockcount;
+                        
                         blk.Channels[c] = chan;
                         chansmpoffs.Clear();
                         samplesrem -= smpcnt;
@@ -1649,7 +1593,6 @@ namespace CodeWalker.GameFiles
             }
 
             StreamBlocks = streamblocks.ToArray();
-
             StreamFormatChunk.BlockCount = (uint)streamblocks.Count;
 
             if (streams != null)
@@ -1660,6 +1603,7 @@ namespace CodeWalker.GameFiles
                     {
                         stream.SeekTableChunk.SeekTable = seektable.ToArray();
                     }
+
                     if (stream.StreamFormatChunk != null)
                     {
                         stream.StreamFormatChunk.BlockCount = StreamFormatChunk.BlockCount;
@@ -1670,30 +1614,29 @@ namespace CodeWalker.GameFiles
                 }
             }
 
-            //build stream blocks into final data chunk
+            //Build stream blocks into final data chunk
             var ms = new MemoryStream();
             var w = new DataWriter(ms);
+
             foreach (var blk in streamblocks)
             {
                 var start = w.Position;
                 blk.Write(w);
+
                 var offs = w.Position - start;
                 var padc = blocksize - offs;
-                if (padc < 0)
-                { }
+
                 if (padc > 0)
                 {
                     w.Write(new byte[padc]);
                 }
             }
+
             var bytes = new byte[ms.Length];
             ms.Position = 0;
             ms.Read(bytes, 0, (int)ms.Length);
 
-            if (DataChunk == null)
-            {
-                DataChunk = new AwcDataChunk(new AwcChunkInfo() { Type = AwcChunkType.data });
-            }
+            DataChunk ??= new AwcDataChunk(new AwcChunkInfo() { Type = AwcChunkType.data });
             DataChunk.Data = bytes;
         }
 
@@ -1701,17 +1644,13 @@ namespace CodeWalker.GameFiles
         {
             var hash = "0x" + (StreamInfo?.Id.ToString("X") ?? "0").PadLeft(8, '0') + ": ";
             if (FormatChunk != null)
-            {
                 return hash + FormatChunk?.ToString() ?? "AwcAudio";
-            }
+            if (VorbisFormatChunk != null)
+                return hash + VorbisFormatChunk?.ToString() ?? "AwcAudio";
             if (StreamFormat != null)
-            {
                 return hash + StreamFormat?.ToString() ?? "AwcAudio";
-            }
             if (MidiChunk != null)
-            {
                 return hash + MidiChunk.ToString();
-            }
             return hash + "Unknown";
         }
 
@@ -1753,7 +1692,7 @@ namespace CodeWalker.GameFiles
         public byte[] GetPcmData()
         {
             var data = GetRawData();
-            var codec = StreamFormat?.Codec ?? FormatChunk?.Codec ?? AwcCodecType.PCM;
+            var codec = StreamFormat?.Codec ?? FormatChunk?.Codec ?? VorbisFormatChunk?.Codec ?? AwcCodecType.PCM;
 
             if (codec == AwcCodecType.MSADPCM)
             {
@@ -1800,8 +1739,10 @@ namespace CodeWalker.GameFiles
             }
             else if (codec == AwcCodecType.VORBIS)
             {
-                data = VorbisCodec.DecodeVorbis(data, VorbisChunk.DataSection1, VorbisChunk.DataSection2, VorbisChunk.DataSection3);
-                return data;
+                if (VorbisFormatChunk != null)
+                    data = VorbisCodec.DecodeVorbis(data, VorbisFormatChunk.VorbisChunk.DataSection1, VorbisFormatChunk.VorbisChunk.DataSection2, VorbisFormatChunk.VorbisChunk.DataSection3);
+                else
+                    data = VorbisCodec.DecodeVorbis(data, VorbisChunk.DataSection1, VorbisChunk.DataSection2, VorbisChunk.DataSection3);
             }
             return data;
         }
@@ -1879,38 +1820,19 @@ namespace CodeWalker.GameFiles
             {
                 using (WaveFileReader reader = new WaveFileReader(ms))
                 {
-                    byte[] pcmData = new byte[reader.Length];
-
+                    var pcmData = new byte[reader.Length];
                     reader.Read(pcmData, 0, (int)reader.Length);
 
-                    //if (r.Position != r.Length)
-                    //{ }
-
-                    if (reader.WaveFormat.Encoding != NAudio.Wave.WaveFormatEncoding.Pcm)
-                    {
+                    if (reader.WaveFormat.Encoding != WaveFormatEncoding.Pcm)
                         throw new InvalidOperationException("Only PCM format .wav files supported!");
-                    }
                     if (reader.WaveFormat.Channels != 1)
-                    {
                         throw new InvalidOperationException("Only mono .wav files supported!");
-                    }
 
-                    int sampleCount = pcmData.Length / (reader.WaveFormat.BitsPerSample / 8);
+                    var sampleCount = pcmData.Length / (reader.WaveFormat.BitsPerSample / 8);
+                    var codec = StreamFormat?.Codec ?? FormatChunk?.Codec ?? VorbisFormatChunk?.Codec ?? AwcCodecType.PCM;
 
-                    //var sampleCount = datalen / 1; //assume 8bits per sample PCM
-                    //var sampleCount = datalen / 2; //assume 16bits per sample PCM
-                    //var sampleCount = datalen / 3; //assume 24bits per sample PCM
-                    //var sampleCount = datalen / 4; //assume 32bits per sample PCM
-
-                    var codec = StreamFormat?.Codec ?? FormatChunk?.Codec ?? AwcCodecType.PCM;
-                    if (codec == AwcCodecType.ADPCM && reader.WaveFormat.Encoding != NAudio.Wave.WaveFormatEncoding.Adpcm)// convert PCM wav to ADPCM where required
+                    if (codec == AwcCodecType.ADPCM && reader.WaveFormat.Encoding != NAudio.Wave.WaveFormatEncoding.Adpcm) //Convert PCM wav to ADPCM where required
                     {
-                        //NAudio.Wave.WaveFormat adpcmFormat = NAudio.Wave.WaveFormat.CreateCustomFormat(NAudio.Wave.WaveFormatEncoding.Adpcm, reader.WaveFormat.SampleRate, reader.WaveFormat.Channels, reader.WaveFormat.AverageBytesPerSecond, reader.WaveFormat.BlockAlign, reader.WaveFormat.BitsPerSample);
-                        //using (var converter = new WaveFormatConversionStream(adpcmFormat, reader))
-                        //{
-                        //    converter.Read(pcmData);
-                        //}
-
                         switch (reader.WaveFormat.BitsPerSample)
                         {
                             case 8:
@@ -1922,9 +1844,6 @@ namespace CodeWalker.GameFiles
                             case 32:
                                 throw new InvalidOperationException("Please encode PCM as 16 bit signed before importing or choose PCM instead.");
                         }
-
-                        //pcmData = ADPCMCodec.EncodeADPCM(pcmData, sampleCount);
-                        //bitsPerSample = 4;
                     }
 
                     if (Awc.MultiChannelFlag)
@@ -1934,8 +1853,10 @@ namespace CodeWalker.GameFiles
                             StreamFormat.Samples = (uint)sampleCount;
                             StreamFormat.SamplesPerSecond = (ushort)reader.WaveFormat.SampleRate;
 
-                            DataChunk = new AwcDataChunk(null);
-                            DataChunk.Data = pcmData;
+                            DataChunk = new AwcDataChunk(null)
+                            {
+                                Data = pcmData
+                            };
                         }
                     }
                     else
@@ -1944,11 +1865,16 @@ namespace CodeWalker.GameFiles
                         {
                             FormatChunk.Samples = (uint)sampleCount;
                             FormatChunk.SamplesPerSecond = (ushort)reader.WaveFormat.SampleRate;
-
-                            if (DataChunk == null) DataChunk = new AwcDataChunk(new AwcChunkInfo() { Type = AwcChunkType.data });
-
-                            DataChunk.Data = pcmData;
                         }
+
+                        if (VorbisFormatChunk != null)
+                        {
+                            VorbisFormatChunk.Samples = (uint)sampleCount;
+                            VorbisFormatChunk.SamplesPerSecond = (ushort)reader.WaveFormat.SampleRate;
+                        }
+
+                        DataChunk ??= new AwcDataChunk(new AwcChunkInfo() { Type = AwcChunkType.data });
+                        DataChunk.Data = pcmData;
                     }
                 }
             }
@@ -1992,13 +1918,6 @@ namespace CodeWalker.GameFiles
 
         public void ParseOggFile(byte[] ogg)
         {
-            //byte[] newValues = new byte[ogg.Length + 4];
-            //newValues[0] = 0x1E;
-            //newValues[1] = 0x00;
-            //newValues[2] = 0x00;
-            //newValues[3] = 0x00;
-            //Array.Copy(ogg, 0, newValues, 4, ogg.Length);
-
             MemoryStream oggStream = new MemoryStream(ogg);
             BinaryReader reader = new BinaryReader(oggStream);
             var length = reader.ReadInt32();
@@ -2026,9 +1945,10 @@ namespace CodeWalker.GameFiles
                 {
                     //StreamFormat.Samples = (uint)sampleCount;
                     StreamFormat.SamplesPerSecond = (ushort)sampleRate;
-
-                    DataChunk = new AwcDataChunk(null);
-                    DataChunk.Data = reader.ReadBytes((int)(oggStream.Length - oggStream.Position));
+                    DataChunk = new AwcDataChunk(null)
+                    {
+                        Data = reader.ReadBytes((int)(oggStream.Length - oggStream.Position))
+                    };
                 }
             }
             else
@@ -2037,11 +1957,15 @@ namespace CodeWalker.GameFiles
                 {
                     //FormatChunk.Samples = (uint)sampleCount;
                     FormatChunk.SamplesPerSecond = (ushort)sampleRate;
-
-                    if (DataChunk == null) DataChunk = new AwcDataChunk(new AwcChunkInfo() { Type = AwcChunkType.data });
-
-                    DataChunk.Data = reader.ReadBytes((int)(oggStream.Length - oggStream.Position));
                 }
+
+                if (VorbisFormatChunk != null)
+                {
+                    //VorbisFormatChunk.Samples = (uint)sampleCount;
+                    VorbisFormatChunk.SamplesPerSecond = (ushort)sampleRate;
+                }
+                DataChunk ??= new AwcDataChunk(new AwcChunkInfo() { Type = AwcChunkType.data });
+                DataChunk.Data = reader.ReadBytes((int)(oggStream.Length - oggStream.Position));
             }
         }
     }
@@ -2051,7 +1975,7 @@ namespace CodeWalker.GameFiles
         //should be the last byte of the hash of the name.
         data = 0x55,            // 0x5EB5E655
         format = 0xFA,          // 0x6061D4FA
-        animation = 0x5C,       // 0x938C925C   not correct
+        animation = 0x5C,       // 0x938C925C, not correct?
         peak = 0x36,            // 0x8B946236
         mid = 0x68,             // 0x71DE4C68
         gesture = 0x2B,         // 0x23097A2B
@@ -2061,8 +1985,8 @@ namespace CodeWalker.GameFiles
         streamformat = 0x48,    // 0x81F95048
         seektable = 0xA3,       // 0x021E86A3
         vorbisheader = 0x7F,    // 0x20D0EF7F
-        formatnew = 0x76,       // 0xA4609776
-        rave_anim_data = 0x81   // 0xC8140E81   not correct
+        format_vorbis = 0x76,   // 0xA4609776
+        rave_anim_data = 0x81   // 0xC8140E81, not correct?
     }
 
     [TC(typeof(EXP))]
@@ -2089,11 +2013,11 @@ namespace CodeWalker.GameFiles
     public class AwcDataChunk : AwcChunk
     {
         public override int ChunkSize => Data?.Length ?? 0;
-
         public byte[] Data { get; set; }
 
         public AwcDataChunk(AwcChunkInfo info) : base(info)
-        { }
+        {
+        }
 
         public override void Read(DataReader r)
         {
@@ -2139,30 +2063,19 @@ namespace CodeWalker.GameFiles
 
         public ushort PeakVal
         {
-            get
-            {
-                return (ushort)((Peak ?? 0) & 0xFFFF);
-            }
-            set
-            {
-                Peak = ((Peak ?? 0) & 0xFFFF0000) + value;
-            }
+            get => (ushort)((Peak ?? 0) & 0xFFFF);
+            set => Peak = ((Peak ?? 0) & 0xFFFF0000) + value;
         }
 
         public ushort PeakUnk
         {
-            get
-            {
-                return (ushort)((Peak ?? 0) >> 16);
-            }
-            set
-            {
-                Peak = ((Peak ?? 0) & 0xFFFF) + (ushort)(value << 16);
-            }
+            get => (ushort)((Peak ?? 0) >> 16);
+            set => Peak = ((Peak ?? 0) & 0xFFFF) + (ushort)(value << 16);
         }
 
         public AwcFormatChunk(AwcChunkInfo info) : base(info)
-        { }
+        {
+        }
 
         public override void Read(DataReader r)
         {
@@ -2184,7 +2097,7 @@ namespace CodeWalker.GameFiles
                     Peak = r.ReadUInt32();
                     break;
                 default:
-                    break;//no hit
+                    break;
             }
         }
 
@@ -2250,6 +2163,127 @@ namespace CodeWalker.GameFiles
     }
 
     [TC(typeof(EXP))]
+    public class AwcVorbisFormatChunk : AwcChunk
+    {
+        public override int ChunkSize => 32 + VorbisHeaderLength;
+        public uint Samples { get; set; }
+        public int LoopPoint { get; set; }
+        public ushort SamplesPerSecond { get; set; }
+        public short Headroom { get; set; }
+        public ushort Unk1 { get; set; }
+        public ushort LoopBegin { get; set; }
+        public ushort LoopEnd { get; set; }
+        public ushort PlayEnd { get; set; }
+        public ushort PlayBegin { get; set; }
+        public int Unk2 { get; set; }
+        public ushort? Peak { get; set; }
+        public AwcCodecType Codec { get; set; }
+        public ushort VorbisHeaderLength { get; set; }
+        public AwcVorbisChunk VorbisChunk { get; set; }
+
+        public ushort PeakVal
+        {
+            get => (ushort)((Peak ?? 0) & 0xFFFF);
+            set => Peak = (ushort?)(((Peak ?? 0) & 0xFFFF0000) + value);
+        }
+
+        public ushort PeakUnk
+        {
+            get => (ushort)((Peak ?? 0) >> 16);
+            set => Peak = (ushort?)(((Peak ?? 0) & 0xFFFF) + (ushort)(value << 16));
+        }
+
+        public AwcVorbisFormatChunk(AwcChunkInfo info) : base(info)
+        {
+        }
+
+        public override void Read(DataReader r)
+        {
+            Samples = r.ReadUInt32();
+            LoopPoint = r.ReadInt32();
+            SamplesPerSecond = r.ReadUInt16();
+            Headroom = r.ReadInt16();
+            Unk1 = r.ReadUInt16();
+            LoopBegin = r.ReadUInt16();
+            LoopEnd = r.ReadUInt16();
+            PlayEnd = r.ReadUInt16();
+            PlayBegin = r.ReadUInt16();
+            Unk2 = r.ReadInt32();
+            Peak = r.ReadUInt16();
+            Codec = (AwcCodecType)r.ReadInt16();
+            VorbisHeaderLength = r.ReadUInt16();
+
+            if (VorbisHeaderLength > 0)
+            {
+                VorbisChunk = new AwcVorbisChunk(new AwcChunkInfo() { Type = AwcChunkType.vorbisheader });
+                VorbisChunk.Read(r);
+            }
+        }
+
+        public override void Write(DataWriter w)
+        {
+            w.Write(Samples);
+            w.Write(LoopPoint);
+            w.Write(SamplesPerSecond);
+            w.Write(Headroom);
+            w.Write(Unk1);
+            w.Write(LoopBegin);
+            w.Write(LoopEnd);
+            w.Write(PlayEnd);
+            w.Write(PlayBegin);
+            w.Write(Unk2);
+            w.Write(Peak.Value);
+            w.Write((short)Codec);
+            w.Write(VorbisHeaderLength);
+
+            if (VorbisHeaderLength > 0 && VorbisChunk != null)
+            {
+                VorbisChunk.Write(w);
+            }
+        }
+
+        public override void WriteXml(StringBuilder sb, int indent)
+        {
+            AwcXml.StringTag(sb, indent, "Type", ChunkInfo?.Type.ToString());
+            AwcXml.StringTag(sb, indent, "Codec", Codec.ToString());
+            AwcXml.ValueTag(sb, indent, "Samples", Samples.ToString());
+            AwcXml.ValueTag(sb, indent, "SampleRate", SamplesPerSecond.ToString());
+            AwcXml.ValueTag(sb, indent, "Headroom", Headroom.ToString());
+            AwcXml.ValueTag(sb, indent, "PlayBegin", PlayBegin.ToString());
+            AwcXml.ValueTag(sb, indent, "PlayEnd", PlayEnd.ToString());
+            AwcXml.ValueTag(sb, indent, "LoopBegin", LoopBegin.ToString());
+            AwcXml.ValueTag(sb, indent, "LoopEnd", LoopEnd.ToString());
+            AwcXml.ValueTag(sb, indent, "LoopPoint", LoopPoint.ToString());
+            AwcXml.ValueTag(sb, indent, "VorbisHeaderLength", VorbisHeaderLength.ToString());
+            AwcXml.ValueTag(sb, indent, "Unk1", Unk1.ToString());
+            AwcXml.ValueTag(sb, indent, "Unk2", Unk2.ToString());
+            AwcXml.ValueTag(sb, indent, "Unk3", Peak.ToString());
+        }
+
+        public override void ReadXml(XmlNode node)
+        {
+            Codec = Xml.GetChildEnumInnerText<AwcCodecType>(node, "Codec");
+            Samples = Xml.GetChildUIntAttribute(node, "Samples");
+            SamplesPerSecond = (ushort)Xml.GetChildUIntAttribute(node, "SampleRate");
+            Headroom = (short)Xml.GetChildIntAttribute(node, "Headroom");
+            PlayBegin = (byte)Xml.GetChildUIntAttribute(node, "PlayBegin");
+            PlayEnd = (ushort)Xml.GetChildUIntAttribute(node, "PlayEnd");
+            LoopBegin = (ushort)Xml.GetChildUIntAttribute(node, "LoopBegin");
+            LoopEnd = (ushort)Xml.GetChildUIntAttribute(node, "LoopEnd");
+            LoopPoint = Xml.GetChildIntAttribute(node, "LoopPoint");
+            VorbisHeaderLength = (ushort)Xml.GetChildUIntAttribute(node, "VorbisHeaderLength");
+            Unk1 = (ushort)Xml.GetChildUIntAttribute(node, "Unk1");
+            Unk2 = Xml.GetChildIntAttribute(node, "Unk2");
+            Peak = (ushort)Xml.GetChildUIntAttribute(node, "Unk3");
+        }
+
+        public override string ToString()
+        {
+            return "format: " + Codec.ToString() + ": " + Samples.ToString() + " samples, " + SamplesPerSecond.ToString() + " samples/sec, headroom: " + Headroom.ToString();
+        }
+    }
+
+    [TC(typeof(EXP))]
     public class AwcStreamFormatChunk : AwcChunk
     {
         public override int ChunkSize => 12 + (Channels?.Length ?? 0) * 16;
@@ -2292,10 +2326,10 @@ namespace CodeWalker.GameFiles
         public override void Write(DataWriter w)
         {
             ChannelCount = (uint)(Channels?.Length ?? 0);
-
             w.Write(BlockCount);
             w.Write(BlockSize);
             w.Write(ChannelCount);
+
             for (int i = 0; i < ChannelCount; i++)
             {
                 Channels[i].Write(w);
@@ -2410,7 +2444,8 @@ namespace CodeWalker.GameFiles
         //public ClipDictionary ClipDict { get; set; }
 
         public AwcAnimationChunk(AwcChunkInfo info) : base(info)
-        { }
+        {
+        }
 
         public override void Read(DataReader r)
         {
@@ -2484,14 +2519,14 @@ namespace CodeWalker.GameFiles
         public ushort[] Data { get; set; }
 
         public AwcPeakChunk(AwcChunkInfo info) : base(info)
-        { }
+        {
+        }
 
         public override void Read(DataReader r)
         {
-            //if ((ChunkInfo.Size % 2) != 0)
-            //{ }//no hit
             var count = ChunkInfo.Size / 2;
             Data = new ushort[count];
+
             for (int i = 0; i < count; i++)
             {
                 Data[i] = r.ReadUInt16();
@@ -3209,12 +3244,11 @@ namespace CodeWalker.GameFiles
         public uint[] SeekTable { get; set; }
 
         public AwcSeekTableChunk(AwcChunkInfo info) : base(info)
-        { }
+        {
+        }
 
         public override void Read(DataReader r)
         {
-            //if ((ChunkInfo.Size % 4) != 0)
-            //{ }//no hit
             var count = ChunkInfo.Size / 4;
             SeekTable = new uint[count];
             for (int i = 0; i < count; i++)
@@ -3250,16 +3284,14 @@ namespace CodeWalker.GameFiles
     [TC(typeof(EXP))]
     public class AwcVorbisChunk : AwcChunk
     {
-        public override int ChunkSize => DataSection1.Length + DataSection2.Length + DataSection3.Length;
-
+        public override int ChunkSize => 12 + DataSection1.Length + DataSection2.Length + DataSection3.Length;
         public byte[] DataSection1 { get; set; }
-
         public byte[] DataSection2 { get; set; }
-
         public byte[] DataSection3 { get; set; }
 
         public AwcVorbisChunk(AwcChunkInfo info) : base(info)
-        { }
+        {
+        }
 
         public override void Read(DataReader r)
         {
@@ -3904,6 +3936,7 @@ namespace CodeWalker.GameFiles
             {
                 infoPacket.packet = bptr;
             }
+
             infoPacket.bytes = new CLong(header1.Length);
             infoPacket.b_o_s = new CLong(256);
             infoPacket.e_o_s = new CLong(0);
@@ -3957,8 +3990,13 @@ namespace CodeWalker.GameFiles
                 {
                     var ms2 = new MemoryStream(page);
                     var reader = new BinaryReader(ms2);
-                    var packetsize = reader.ReadUInt16();
 
+                    if (page[0] == 1 && page[1] == 1 && page[2] == 94)
+                    {
+
+                    }
+
+                    var packetsize = reader.ReadUInt16();
                     while (packetsize > 0)
                     {
                         var workingPacket = new ogg_packet
@@ -3984,6 +4022,7 @@ namespace CodeWalker.GameFiles
 
                         if (Vorbis.vorbis_synthesis(&vorbis_Block, &workingPacket) == 0)
                         {
+                            int ret = Vorbis.vorbis_synthesis(&vorbis_Block, &workingPacket);
                             Vorbis.vorbis_synthesis_blockin(&state, &vorbis_Block);
 
                             float** pcm;
@@ -3991,42 +4030,36 @@ namespace CodeWalker.GameFiles
 
                             while ((samples = Vorbis.vorbis_synthesis_pcmout(&state, &pcm)) > 0)
                             {
-                                int outputLength = (samples < 2048 / info.channels) ? samples : 2048 / info.channels;
-                                int blockSize = sizeof(short) * outputLength * info.channels;
-                                short* result_ptr = stackalloc short[blockSize];
-
-                                // Convert floats to 16 bit signed ints (host order) and interleave
-                                for (int channel = 0; channel < info.channels; channel++)
+                                var remaining = samples;
+                                while (remaining > 0)
                                 {
-                                    short* first = result_ptr + channel;
-                                    short* current = first;
-                                    float* pcm_channel = pcm[channel];
+                                    var toProcess = Math.Min(remaining, 1024);
+                                    int blockSize = sizeof(short) * toProcess * info.channels;
+                                    short* result_ptr = stackalloc short[blockSize / sizeof(short)];
 
-                                    for (int position = 0; position < outputLength; position++)
+                                    for (int channel = 0; channel < info.channels; channel++)
                                     {
-                                        int value = (int)(pcm_channel[position] * 32768.0f);
+                                        short* current = result_ptr + channel;
+                                        float* pcm_channel = pcm[channel];
 
-                                        // might as well guard against clipping.
-                                        if (value > 32767) value = 32767;
-                                        if (value < -32768) value = -32768;
+                                        for (int position = 0; position < toProcess; position++)
+                                        {
+                                            int value = (int)(pcm_channel[position] * 32768.0f);
+                                            if (value > 32767) value = 32767;
+                                            if (value < -32768) value = -32768;
 
-                                        *current = (short)value;
-                                        current += info.channels;
+                                            *current = (short)value;
+                                            current += info.channels;
+                                        }
                                     }
+
+                                    var resultBlock = new byte[blockSize];
+                                    Marshal.Copy((IntPtr)result_ptr, resultBlock, 0, resultBlock.Length);
+                                    writer.Write(resultBlock);
+
+                                    Vorbis.vorbis_synthesis_read(&state, toProcess);
+                                    remaining -= toProcess;
                                 }
-
-                                byte[] resultBlock = new byte[blockSize];
-
-                                Marshal.Copy
-                                (
-                                    (IntPtr)result_ptr,
-                                    resultBlock, 0,
-                                    resultBlock.Length
-                                );
-
-                                writer.Write(resultBlock);
-
-                                Vorbis.vorbis_synthesis_read(&state, outputLength);
                             }
                         }
                         else
@@ -4034,7 +4067,7 @@ namespace CodeWalker.GameFiles
                             break;
                         }
 
-                        if (reader.BaseStream.Position >= reader.BaseStream.Length)
+                        if ((reader.BaseStream.Position % 2048 == 0) || reader.BaseStream.Position >= reader.BaseStream.Length)
                         {
                             packetsize = 0;
                             break;

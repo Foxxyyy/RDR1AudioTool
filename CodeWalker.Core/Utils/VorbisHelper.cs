@@ -1,57 +1,21 @@
-﻿using OggVorbisSharp;
+﻿using NAudio.Wave;
+using OggVorbisSharp;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace CodeWalker.Core.Utils
 {
-    internal static unsafe class VorbisHelper
+    public static unsafe class VorbisHelper
     {
-        private static void WritePacket(BinaryWriter bw, ogg_packet packet)
-        {
-            byte[] raw = new byte[packet.bytes.Value];
-            Marshal.Copy((IntPtr)packet.packet, raw, 0, raw.Length);
-            bw.Write((ushort)raw.Length);
-            bw.Write(raw);
-        }
-
-        public static vorbis_dsp_state CreateHeader(long channels, long sampleRate, out byte[] streamIdData, out byte[] commentData, out byte[] codebookData)
-        {
-            MemoryStream memoryStream = new MemoryStream();
-            BinaryWriter bw = new BinaryWriter(memoryStream);
-
-            vorbis_info info = new vorbis_info();
-            Vorbis.vorbis_info_init(&info);
-            VorbisEnc.vorbis_encode_init_vbr(&info, channels, sampleRate, 1);
-            vorbis_dsp_state state = new vorbis_dsp_state();
-            Vorbis.vorbis_analysis_init(&state, &info);
-            vorbis_comment comment = new vorbis_comment();
-            Vorbis.vorbis_comment_init(&comment);
-            ogg_packet streamId = new ogg_packet();
-            ogg_packet commentPacket = new ogg_packet();
-            ogg_packet codebookPacket = new ogg_packet();
-            Vorbis.vorbis_analysis_headerout(&state, &comment, &streamId, &commentPacket, &codebookPacket);
-
-            streamIdData = new byte[streamId.bytes.Value];
-            commentData = new byte[commentPacket.bytes.Value];
-            codebookData = new byte[codebookPacket.bytes.Value];
-
-            Marshal.Copy((IntPtr)streamId.packet, streamIdData, 0, (int)streamId.bytes.Value);
-            Marshal.Copy((IntPtr)commentPacket.packet, commentData, 0, (int)commentPacket.bytes.Value);
-            Marshal.Copy((IntPtr)codebookPacket.packet, codebookData, 0, (int)codebookPacket.bytes.Value);
-
-            Vorbis.vorbis_comment_clear(&comment);
-            Vorbis.vorbis_info_clear(&info);
-
-            return state; 
-        }
-
         public static unsafe byte[] Encode(byte[] data, long channels, long sampleRate, out byte[] streamIdData, out byte[] commentData, out byte[] codebookData)
         {
             var info = new vorbis_info();
             Vorbis.vorbis_info_init(&info);
 
-            VorbisEnc.vorbis_encode_init(&info, channels, sampleRate, -1, 86000, -1); //Quality level 1.0f
+            VorbisEnc.vorbis_encode_init_vbr(&info, channels, sampleRate, 0.5f);
 
             var comment = new vorbis_comment();
             Vorbis.vorbis_comment_init(&comment);
@@ -61,9 +25,6 @@ namespace CodeWalker.Core.Utils
 
             var block = new vorbis_block();
             Vorbis.vorbis_block_init(&state, &block);
-
-            var stream = new MemoryStream();
-            var bw = new BinaryWriter(stream);
 
             var streamId = new ogg_packet();
             var commentPacket = new ogg_packet();
@@ -78,10 +39,23 @@ namespace CodeWalker.Core.Utils
             Marshal.Copy((IntPtr)commentPacket.packet, commentData, 0, (int)commentPacket.bytes.Value);
             Marshal.Copy((IntPtr)codebookPacket.packet, codebookData, 0, (int)codebookPacket.bytes.Value);
 
-            var pcmStream = new MemoryStream(data);
-            var br = new BinaryReader(pcmStream);
-            var endOfFile = false;
+            using var outputStream = new MemoryStream();
+            using var bw = new BinaryWriter(outputStream);
+            using var pcmStream = new MemoryStream(data);
+            using var br = new BinaryReader(pcmStream);
+            var pageBuffer = new List<byte>();
 
+            void FlushPage()
+            {
+                while (pageBuffer.Count < 2048)
+                {
+                    pageBuffer.Add(0);
+                }
+                bw.Write(pageBuffer.ToArray());
+                pageBuffer.Clear();
+            }
+
+            var endOfFile = false;
             while (!endOfFile)
             {
                 var buffer = br.ReadBytes(4096);
@@ -98,15 +72,15 @@ namespace CodeWalker.Core.Utils
                     {
                         for (int ch = 0; ch < channels; ch++)
                         {
-                            var offset = (int)((s * channels + ch) * 2);
-                            var sample = (short)(buffer[offset] | (buffer[offset + 1] << 8));
+                            int offset = (s * (int)channels + ch) * 2;
+                            short sample = (short)(buffer[offset] | (buffer[offset + 1] << 8));
                             inputBuffer[ch][s] = sample / 32768f;
                         }
                     }
-                    Vorbis.vorbis_analysis_wrote(&state, samplesRead); //Tells the library how much we actually submitted
+                    Vorbis.vorbis_analysis_wrote(&state, samplesRead);
                 }
 
-                while (Vorbis.vorbis_analysis_blockout(&state, &block) == 1) //Vorbis does some data preanalysis, then divvies up blocks
+                while (Vorbis.vorbis_analysis_blockout(&state, &block) == 1)
                 {
                     Vorbis.vorbis_analysis(&block, null);
                     Vorbis.vorbis_bitrate_addblock(&block);
@@ -117,9 +91,24 @@ namespace CodeWalker.Core.Utils
                         var rawData = new byte[dataOut.bytes.Value];
                         Marshal.Copy((IntPtr)dataOut.packet, rawData, 0, rawData.Length);
 
-                        //Write size + data
-                        bw.Write((ushort)rawData.Length);
-                        bw.Write(rawData);
+                        int packetSize = rawData.Length + 2;
+                        int remaining = 2048 - pageBuffer.Count;
+
+                        //If it won't fit in this page, pad and flush
+                        if (packetSize > remaining)
+                        {
+                            FlushPage();
+                        }
+
+                        // Now add the packet
+                        pageBuffer.AddRange(BitConverter.GetBytes((ushort)rawData.Length));
+                        pageBuffer.AddRange(rawData);
+
+                        //If the page fills exactly, flush it immediately
+                        if (pageBuffer.Count == 2048)
+                        {
+                            FlushPage();
+                        }
 
                         if (samplesRead == 0)
                         {
@@ -129,84 +118,24 @@ namespace CodeWalker.Core.Utils
                 }
             }
 
-            br.Dispose();
-            pcmStream.Dispose();
+            // Final flush
+            if (pageBuffer.Count > 0)
+            {
+                FlushPage();
+            }
 
-            var finalData = stream.ToArray();
+            var finalData = outputStream.ToArray();
             Vorbis.vorbis_block_clear(&block);
             Vorbis.vorbis_dsp_clear(&state);
             Vorbis.vorbis_comment_clear(&comment);
             Vorbis.vorbis_info_clear(&info);
 
-            bw.Dispose();
-            stream.Dispose();
-
             return finalData;
         }
 
-        public static unsafe byte[] Decode(byte[] data, long channels, long sampleRate, byte[] streamIdData, byte[] commentData, byte[] codebookData)
+        public static string GetVorbisVersion()
         {
-            ogg_packet streamId = new ogg_packet();
-            fixed (byte* ptr = streamIdData)
-            {
-                streamId.packet = ptr;
-            }
-            streamId.bytes = new CLong(streamIdData.Length);
-            streamId.b_o_s = new CLong(1);
-            streamId.e_o_s = new CLong(0);
-            streamId.granulepos = 0;
-            streamId.packetno = 0;
-
-            ogg_packet commentPacket = new ogg_packet();
-            fixed (byte* ptr = commentData)
-            {
-                commentPacket.packet = ptr;
-            }
-            commentPacket.bytes = new CLong(commentData.Length);
-            commentPacket.b_o_s = new CLong(0);
-            commentPacket.e_o_s = new CLong(0);
-            commentPacket.granulepos = 0;
-            commentPacket.packetno = 1;
-
-            ogg_packet codebookPacket = new ogg_packet();
-            fixed (byte* ptr = codebookData)
-            {
-                codebookPacket.packet = ptr;
-            }
-            codebookPacket.bytes = new CLong(codebookData.Length);
-            codebookPacket.b_o_s = new CLong(0);
-            codebookPacket.e_o_s = new CLong(0);
-            commentPacket.granulepos = 0;
-            codebookPacket.packetno = 2;
-
-            MemoryStream stream = new MemoryStream(data);
-            BinaryReader reader = new BinaryReader(stream);
-            
-            while (stream.Position < stream.Length)
-            {
-
-            }
-
-            vorbis_info vorbis_Info = new vorbis_info();
-            vorbis_comment vorbis_Comment = new vorbis_comment();
-            Vorbis.vorbis_info_init(&vorbis_Info);
-            Vorbis.vorbis_comment_init(&vorbis_Comment);
-
-            Vorbis.vorbis_synthesis_headerin(&vorbis_Info, &vorbis_Comment, &streamId);
-            Vorbis.vorbis_synthesis_headerin(&vorbis_Info, &vorbis_Comment, &commentPacket);
-            Vorbis.vorbis_synthesis_headerin(&vorbis_Info, &vorbis_Comment, &codebookPacket);
-
-            vorbis_dsp_state state = new vorbis_dsp_state();
-            vorbis_block block = new vorbis_block();
-            if (Vorbis.vorbis_synthesis_init(&state, &vorbis_Info) == 0)
-            {
-                Vorbis.vorbis_block_init(&state, &block);
-            }
-            else
-            {
-                throw new Exception();
-            }
-            return null;
+            return Marshal.PtrToStringAnsi(VorbisEnc.vorbis_version_string());
         }
     }
 
@@ -219,5 +148,8 @@ namespace CodeWalker.Core.Utils
 
         [DllImport(LibraryName, ExactSpelling = true)]
         public static extern int vorbis_encode_init(vorbis_info* vi, long channels, long rate, long max_bitrate, long nominal_bitrate, long min_bitrate);
+
+        [DllImport(LibraryName, ExactSpelling = true)]
+        public static extern IntPtr vorbis_version_string();
     }
 }

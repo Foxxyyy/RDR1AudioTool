@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:RDR1AudioTool"
         mc:Ignorable="d"
-        Title="RDR1 Audio Tool" Height="532" Width="825" MinHeight="532" MinWidth="825" Background="#FF1F1F1F" Style="{StaticResource CustomWindowStyle}">
+        Title="RDR Audio Tool" Height="532" Width="825" MinHeight="532" MinWidth="825" Background="#FF1F1F1F" Style="{StaticResource CustomWindowStyle}">
     <Grid Margin="0,10,0,0">
         <TabControl SelectionChanged="TabControl_SelectionChanged">
             <TabItem x:Name="AwcPlayerTab" Header="Player">

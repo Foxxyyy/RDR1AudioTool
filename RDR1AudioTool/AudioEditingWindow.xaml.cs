@@ -168,7 +168,7 @@ namespace RDR1AudioTool
 
                         Awc = new AwcFile();
                         Awc.Load(memoryStream.ToArray(), System.IO.Path.GetFileName(fbd.FileName));
-                        Title = $"RDR1 Audio Tool - {System.IO.Path.GetFileName(fbd.FileName)}";
+                        Title = $"RDR Audio Tool - {System.IO.Path.GetFileName(fbd.FileName)}";
                         VolumeResetButton.IsEnabled = true;
                         VolumeSlider.IsEnabled = true;
 
@@ -196,32 +196,24 @@ namespace RDR1AudioTool
 
         private void Button_Click_1(object sender, RoutedEventArgs e)
         {
-
-            Microsoft.Win32.SaveFileDialog dialog = new Microsoft.Win32.SaveFileDialog();
-
-            dialog.FileName = Awc?.Name;
+            if (Awc == null) return;
+            var dialog = new SaveFileDialog
+            {
+                FileName = Awc.Name
+            };
 
             var dialogResult = dialog.ShowDialog();
-
-
-
             if (dialogResult == true)
             {
-                
-                if ((bool)(Awc?.MultiChannelFlag))
+                if (Awc.MultiChannelFlag)
                 {
-                    Awc?.MultiChannelSource?.CompactMultiChannelSources(Awc?.Streams);
+                    Awc.MultiChannelSource?.CompactMultiChannelSources(Awc.Streams);
                 }
-
                 
-                Awc?.BuildPeakChunks();
-
-                Awc?.BuildChunkIndices();
-
-                Awc?.BuildStreamInfos();
-
-                Awc?.BuildStreamDict();
-
+                Awc.BuildPeakChunks();
+                Awc.BuildChunkIndices();
+                Awc.BuildStreamInfos();
+                Awc.BuildStreamDict();
                 File.WriteAllBytes(dialog.FileName, Awc.Save());
             }
         }
@@ -231,7 +223,6 @@ namespace RDR1AudioTool
             if (Awc.MultiChannelFlag)
             {
                 string name = null;
-
                 if (Awc.Streams[1].Name.EndsWith("_right"))
                 {
                     name = Awc.Streams[1].Name.Substring(0, Awc.Streams[1].Name.Length - 6);
@@ -242,7 +233,6 @@ namespace RDR1AudioTool
                 }
 
                 RenameWindow w = new RenameWindow(name);
-
                 bool? r = w.ShowDialog();
 
                 if (r == true)
@@ -396,9 +386,9 @@ namespace RDR1AudioTool
 
         private void ReplaceButton_Click(object sender, RoutedEventArgs e)
         {
-            ReplaceAudioWindow window = new ReplaceAudioWindow(Awc.MultiChannelFlag);
-
-            bool? result = window.ShowDialog();
+            if (Awc == null) return;
+            var window = new ReplaceAudioWindow(Awc.MultiChannelFlag);
+            var result = window.ShowDialog();
 
             if (result == true)
             {
@@ -406,35 +396,25 @@ namespace RDR1AudioTool
                 {
                     for (int i = 0; i < StreamList.SelectedItems.Count; i++)
                     {
-                        if (Awc?.Streams != null)
+                        if (Awc?.Streams == null) continue;
+                        if (StreamList.SelectedItems[i] is StereoItemInfo stereoInfo)
                         {
-                            if ((StreamList.SelectedItems[i] as StereoItemInfo) != null)
+                            var pcmdata = window.PcmData;
+                            if (!window.StereoInput)
                             {
-                                byte[] pcmdata = null;
-
-                                pcmdata = window.PcmData;
-
-                                if (!window.StereoInput)
-                                {
-                                    pcmdata = MonoToStereo(pcmdata);
-                                }
-
-                                Awc?.ReplaceAudioStreamStereo((StreamList.SelectedItems[i] as StereoItemInfo).StreamLeft.Hash, (StreamList.SelectedItems[i] as StereoItemInfo).StreamRight.Hash, (uint)(window.SampleCount / 2), (uint)window.SampleRate, window.PcmData, window.CodecType);
+                                pcmdata = MonoToStereo(pcmdata); //Convert mono input to stereo interleaved buffer
                             }
-                            else
+                            Awc?.ReplaceAudioStreamStereo(stereoInfo.StreamLeft.Hash, stereoInfo.StreamRight.Hash, (uint)window.SampleCount, (uint)window.SampleRate, pcmdata, window.CodecType);
+                        }
+                        else if (StreamList.SelectedItems[i] is ItemInfo monoInfo)
+                        {
+                            var pcmdata = window.PcmData;
+                            if (window.StereoInput)
                             {
-                                byte[] pcmdata = null;
-
-                                pcmdata = window.PcmData;
-
-                                if (window.StereoInput)
-                                {
-                                    pcmdata = MixStereoToMono(pcmdata);
-                                }
-
-                                Awc?.ReplaceAudioStreamSingle((StreamList.SelectedItems[i] as ItemInfo).Stream.Hash, (uint)window.SampleCount / 2, (uint)window.SampleRate, pcmdata, window.CodecType);
+                                pcmdata = MixStereoToMono(pcmdata); //Convert stereo input to mono buffer
                             }
 
+                            Awc?.ReplaceAudioStreamSingle(monoInfo.Stream.Hash, (uint)window.SampleCount, (uint)window.SampleRate, pcmdata, window.CodecType);
                         }
                     }
 
@@ -442,26 +422,21 @@ namespace RDR1AudioTool
                     return;
                 }
 
+                //Non-multichannel AWC
                 for (int i = 0; i < StreamList.SelectedItems.Count; i++)
                 {
-                    if (Awc?.Streams != null)
+                    if (Awc?.Streams == null) continue;
+                    if (StreamList.SelectedItems[i] is ItemInfo item)
                     {
-                        byte[] pcmdata = null;
-                        pcmdata = window.PcmData;
-
+                        var pcmdata = window.PcmData;
                         if (window.StereoInput)
                         {
                             pcmdata = MixStereoToMono(pcmdata);
                         }
-
-                        if (StreamList.SelectedItems[i] is ItemInfo item)
-                        {
-                            Awc?.ReplaceAudioStreamSingle(item.Stream.Hash, (uint)window.SampleCount, (uint)window.SampleRate, pcmdata, window.CodecType);
-                        }
+                        Awc?.ReplaceAudioStreamSingle(item.Stream.Hash, (uint)window.SampleCount, (uint)window.SampleRate, pcmdata, window.CodecType);
                     }
                 }
             }
-
             RefreshList();
         }
 
@@ -489,25 +464,23 @@ namespace RDR1AudioTool
             {
                 currentPlayingIndex = StreamList.SelectedIndex;
 
-                double lengthSeconds = 0;
+                double lengthSeconds;
                 var item = StreamList.Items[currentPlayingIndex];
 
                 if (item.GetType() == typeof(StereoItemInfo))
                 {
                     StereoItemInfo aud = (StereoItemInfo)item;
                     lengthSeconds = aud.StreamLeft.Length;
-                    byte[] leftPcm = aud.StreamLeft.GetPcmData();
-                    byte[] rightPcm = aud.StreamRight.GetPcmData();
 
-                    byte[] stereoPcm = CombineLeftAndRightChannel(leftPcm, rightPcm);
-
+                    var leftPcm = aud.StreamLeft.GetPcmData();
+                    var rightPcm = aud.StreamRight.GetPcmData();
+                    var stereoPcm = CombineLeftAndRightChannel(leftPcm, rightPcm);
                     sourceWaveStream = new RawSourceWaveStream(new MemoryStream(stereoPcm), new WaveFormat(aud.StreamLeft.SamplesPerSecond, 16, 2));
                 }
                 else
                 {
                     var audio = (item as ItemInfo).Stream;
                     lengthSeconds = audio.Length;
-
                     sourceWaveStream = new RawSourceWaveStream(new MemoryStream(audio.GetPcmData()), new WaveFormat(audio.SamplesPerSecond, 16, 1));
                 }
 
@@ -527,9 +500,11 @@ namespace RDR1AudioTool
 
         private byte[] CombineLeftAndRightChannel(byte[] left, byte[] right)
         {
-            byte[] output = new byte[left.Length + right.Length];
+            int minLength = Math.Min(left.Length, right.Length);
+            byte[] output = new byte[minLength * 2];
             int outputIndex = 0;
-            for (int n = 0; n < left.Length; n += 2)
+
+            for (int n = 0; n < minLength; n += 2)
             {
                 output[outputIndex++] = left[n];
                 output[outputIndex++] = left[n + 1];
