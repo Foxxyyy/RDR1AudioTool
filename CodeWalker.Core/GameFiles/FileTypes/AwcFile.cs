@@ -201,6 +201,7 @@ namespace CodeWalker.GameFiles
             Streams = streams.ToArray();
             MultiChannelSource?.AssignMultiChannelSources(Streams);
             BuildStreamDict();
+            TestChunkOrdering(r.Length);
         }
 
         private void Write(DataWriter w)
@@ -632,15 +633,13 @@ namespace CodeWalker.GameFiles
             if (StreamInfos == null) return;
 
             var issorted = MultiChannelFlag || !SingleChannelEncryptFlag;
-
             var chunklist = ChunkInfos.ToList();
             chunklist.Sort((a, b) => a.Offset.CompareTo(b.Offset));
             var chunks = chunklist.ToArray();
 
-            //var chunks2 = GetAllChunks();
-
             var infoStart = 16 + (ChunkIndicesFlag ? (StreamCount * 2) : 0);
             var offset = infoStart + (StreamCount * 4) + (chunks.Length * 8);
+
             foreach (var chunk in chunks)
             {
                 if (issorted)
@@ -654,8 +653,7 @@ namespace CodeWalker.GameFiles
                 switch (chunk.Type)
                 {
                     case AwcChunkType.animation:
-                        if (issorted)
-                        { }//no hit
+                    case AwcChunkType.rave_anim_data:
                         switch (chunk.Offset - offset)
                         {
                             case 12:
@@ -671,8 +669,6 @@ namespace CodeWalker.GameFiles
                         break;
 
                     case AwcChunkType.gesture:
-                        if (issorted)
-                        { }//no hit
                         switch (chunk.Offset - offset)
                         {
                             case 0:
@@ -688,14 +684,10 @@ namespace CodeWalker.GameFiles
                     case AwcChunkType.seektable:
                         break;
                 }
-                if ((chunk.Offset - offset) != 0)
-                { offset = chunk.Offset; }//no hit
                 offset += chunk.Size;
             }
 
             if (WholeFileEncrypted) offset += (4 - (offset % 4)) % 4;
-            if ((datalength - offset) != 0)
-            { }//no hit
 
             if (issorted)
             {
@@ -940,6 +932,7 @@ namespace CodeWalker.GameFiles
                     case AwcChunkType.granulargrains:
                     case AwcChunkType.granularloops:
                     case AwcChunkType.animation:
+                    case AwcChunkType.rave_anim_data:
                     case AwcChunkType.gesture:
                         return 2;
                     case AwcChunkType.seektable:
@@ -967,12 +960,10 @@ namespace CodeWalker.GameFiles
                     case AwcChunkType.data:
                     case AwcChunkType.mid:
                         return 16;
-
                     case AwcChunkType.markers:
                     case AwcChunkType.granulargrains:
                     case AwcChunkType.granularloops:
                         return 4;
-
                     default:
                         break;
                 }
@@ -3665,32 +3656,21 @@ namespace CodeWalker.GameFiles
             int coef1 = Coefs[predictor, 0];
             int coef2 = Coefs[predictor, 1];
 
-            //Estimate initial delta (step size)
+            //Estimate samples
             var s2 = samples[offset];     //Older
             var s1 = samples[offset + 1]; //Newer
 
-            var totalError = 0;
-            var n = Math.Min(count - 2, 16); //Use up to 16 samples for delta estimation
-            for (int i = 0; i < n; i++)
-            {
-                var predicted = (s1 * coef1 + s2 * coef2) >> 8;
-                var diff = samples[offset + i] - predicted;
-                totalError += Math.Abs(diff);
-            }
-
-            //Write header
-            var delta = (short)Math.Max(16, totalError / Math.Max(1, n)); //Minimum delta is 16
+            //Initial delta (step size)
+            var delta = (short)Math.Max(16, Math.Abs(s1 - s2));
+            
             var buffer = new byte[blockSize];
-
             buffer[0] = (byte)predictor;
             BitConverter.GetBytes(delta).CopyTo(buffer, 1);
-            BitConverter.GetBytes(s2).CopyTo(buffer, 3); //Sample 0
-            BitConverter.GetBytes(s1).CopyTo(buffer, 5); //Sample 1
+            BitConverter.GetBytes(s1).CopyTo(buffer, 3); //Sample 0
+            BitConverter.GetBytes(s2).CopyTo(buffer, 5); //Sample 1
 
             int scale = delta;
             var bufIndex = 7;
-
-            //Encode nibbles
             var outByte = 0;
             var highNibble = true;
 
@@ -3698,26 +3678,37 @@ namespace CodeWalker.GameFiles
             {
                 int pcm = samples[offset + i];
                 var predicted = (s1 * coef1 + s2 * coef2) >> 8;
-                var diff = pcm - predicted;
+                
+                //Brute-force search best nibble
+                int bestNibble = 0;
+                int bestErr = int.MaxValue;
+                int bestRecon = 0;
 
-                var nibble = diff / scale;
-                nibble = Math.Max(-8, Math.Min(7, nibble));
-
-                var decoded = predicted + nibble * scale;
-                decoded = Clamp16(decoded);
-
-                //Update history
-                s2 = s1;
-                s1 = (short)decoded;
-
-                //Update scale
-                scale = (scale * AdaptationTable[nibble & 0x0F]) >> 8;
-                if (scale < 16)
+                for (int cand = -8; cand <= 7; cand++)
                 {
-                    scale = 16;
+                    int recon = predicted + cand * scale;
+                    recon = Clamp16(recon);
+                    int err = Math.Abs(pcm - recon);
+
+                    if (err < bestErr)
+                    {
+                        bestErr = err;
+                        bestNibble = cand;
+                        bestRecon = recon;
+                    }
                 }
 
-                //Pack nibble
+                int nibble = bestNibble;
+
+                // Update history with best reconstruction
+                s2 = s1;
+                s1 = (short)bestRecon;
+
+                // Update scale
+                scale = (scale * AdaptationTable[nibble & 0x0F]) >> 8;
+                if (scale < 16) scale = 16;
+
+                // Pack nibble
                 if (highNibble)
                 {
                     outByte = (nibble & 0x0F) << 4;

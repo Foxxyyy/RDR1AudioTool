@@ -120,7 +120,7 @@ namespace RDR1AudioTool
             }
         }
 
-        public static void ResampleWav(string inputPath, string outputPath, int newSampleRate = 24000)
+        private static void ResampleWav(string inputPath, string outputPath, int newSampleRate = 24000)
         {
             using var reader = new WaveFileReader(inputPath);
             var outFormat = new WaveFormat(newSampleRate, reader.WaveFormat.Channels);
@@ -129,9 +129,23 @@ namespace RDR1AudioTool
             WaveFileWriter.CreateWaveFile(outputPath, resampler);
         }
 
+        private static (byte[] Pcm, int SampleCount) PadToBlockSize(byte[] pcmData, int channels, int sampleCount, int blockSize = 16)
+        {
+            var pad = (blockSize - (sampleCount % blockSize)) % blockSize;
+            if (pad == 0)
+            {
+                return (pcmData, sampleCount);
+            }
+
+            var bytesPerSample = 2 * channels; //16-bit PCM
+            var padded = new byte[pcmData.Length + pad * bytesPerSample];
+            Buffer.BlockCopy(pcmData, 0, padded, 0, pcmData.Length);
+            return (padded, sampleCount + pad);
+        }
+
+
         private void ReadWavFile(string fileName)
         {
-           // ResampleWav(fileName, @"C:\Users\fumol\Downloads\0x11C014D3_.wav");
             var wavFile = new WaveFileReader(fileName);
             if (wavFile.WaveFormat.Encoding != WaveFormatEncoding.Pcm && wavFile.WaveFormat.Encoding != WaveFormatEncoding.Adpcm)
             {
@@ -151,6 +165,7 @@ namespace RDR1AudioTool
             {
                 StereoInput = true;
             }
+
             SampleCount = PcmData.Length / (2 * wavFile.WaveFormat.Channels);
         }
 
