@@ -53,16 +53,16 @@
                             </ContextMenu>
                         </ListView.ContextMenu>
                     </ListView>
-                    <Button Content="Open AWC" HorizontalAlignment="Left" VerticalAlignment="Top" Height="24" Width="100" Click="Button_Click" Margin="10,0,0,0" Foreground="White" BorderBrush="#FF424242" Background="#FF1F1F1F"/>
-                    <Button x:Name="SaveButton" Content="Save AWC" HorizontalAlignment="Left" VerticalAlignment="Top" Height="24" Width="100" Margin="110,0,0,0" Click="Button_Click_1" IsEnabled="False" Foreground="White" BorderBrush="#FF424242" Background="#FF1F1F1F"/>
+                    <Button Content="Open AWC" HorizontalAlignment="Left" VerticalAlignment="Top" Height="24" Width="100" Click="OpenAWC_Click" Margin="10,0,0,0" Foreground="White" BorderBrush="#FF424242" Background="#FF1F1F1F"/>
+                    <Button x:Name="SaveButton" Content="Save AWC" HorizontalAlignment="Left" VerticalAlignment="Top" Height="24" Width="100" Margin="110,0,0,0" Click="SaveAWC_Click" IsEnabled="False" Foreground="White" BorderBrush="#FF424242" Background="#FF1F1F1F"/>
                     <Button x:Name="RenameButton" Content="Rename Track" HorizontalAlignment="Left" VerticalAlignment="Top" Height="24" Width="100" Margin="221,0,0,0" IsEnabled="False" Foreground="White" BorderBrush="#FF424242" Background="#FF1F1F1F" Click="RenameButton_Click"/>
                     <Button x:Name="DeleteButton" Content="Delete Track" HorizontalAlignment="Left" VerticalAlignment="Top" Height="24" Width="100" Margin="421,0,0,0" IsEnabled="False" Foreground="White" BorderBrush="#FF424242" Background="#FF1F1F1F"/>
                     <Button x:Name="ReplaceButton" Content="Replace Track" HorizontalAlignment="Left" VerticalAlignment="Top" Height="24" Width="100" Margin="321,0,0,0" IsEnabled="False" Foreground="White" BorderBrush="#FF424242" Background="#FF1F1F1F" Click="ReplaceButton_Click"/>
                     <Button x:Name="MoreOptionsButton" Content="Replace Tracks" HorizontalAlignment="Left" VerticalAlignment="Top" Height="24" Width="100" Margin="521,0,0,0" RenderTransformOrigin="0.135,0.585" IsEnabled="False" Foreground="White" BorderBrush="#FF424242" Background="#FF1F1F1F" Click="MoreOptionsButton_Click"/>
                     <Rectangle HorizontalAlignment="Left" Height="24" Margin="215,0,0,0" Stroke="#FF424242" VerticalAlignment="Top" Width="1" Fill="#FF424242"/>
                     <Label x:Name="DurationLabel" Content="00:00 / 00:00" HorizontalAlignment="Left" Margin="10,0,0,15" VerticalAlignment="Bottom"/>
-                    <CheckBox x:Name="AutoPlayBox" Content="Autoplay" HorizontalAlignment="Left" Margin="115,0,0,18" VerticalAlignment="Bottom" IsEnabled="False" Checked="autoPlay_Checked" Unchecked="autoPlay_Unchecked"/>
-                    <CheckBox x:Name="LoopAutoPlay" Content="Loop Entire AWC" HorizontalAlignment="Left" Margin="195,0,0,18" VerticalAlignment="Bottom" IsEnabled="False" Checked="loopAutoPlay_Checked" Unchecked="loopAutoPlay_Unchecked"/>
+                    <CheckBox x:Name="AutoPlayBox" Content="Autoplay" HorizontalAlignment="Left" Margin="115,0,0,18" VerticalAlignment="Bottom" IsEnabled="False" Checked="AutoPlay_Checked" Unchecked="AutoPlay_Unchecked"/>
+                    <CheckBox x:Name="LoopAutoPlay" Content="Loop Entire AWC" HorizontalAlignment="Left" Margin="195,0,0,18" VerticalAlignment="Bottom" IsEnabled="False" Checked="LoopAutoPlay_Checked" Unchecked="LoopAutoPlay_Unchecked"/>
                     <Button x:Name="PlayLastButton" Content="⏮" HorizontalAlignment="Center" Margin="-85,0,0,8" VerticalAlignment="Bottom" Height="40" Width="40" FontSize="24" Click="PlayLastButton_Click" IsEnabled="False"/>
                     <Button x:Name="PlayButton" Content="▶" HorizontalAlignment="Center" Margin="15,0,0,8" VerticalAlignment="Bottom" Height="40" Width="40" FontSize="24" Click="PlayButton_Click" IsEnabled="False"/>
                     <Button x:Name="PlayNextButton" Content="⏭" HorizontalAlignment="Center" Margin="115,0,0,8" VerticalAlignment="Bottom" Height="40" Width="40" FontSize="24" Click="PlayNextButton_Click" IsEnabled="False"/>
@@ -70,11 +70,11 @@
                         <Slider x:Name="slider" HorizontalAlignment="Stretch" Margin="0,0,0,45" VerticalAlignment="Bottom" IsEnabled="False" ValueChanged="Slider_ValueChanged"/>
                     </DockPanel>
                     <DockPanel DockPanel.Dock="Bottom" LastChildFill="True" Margin="10">
-                        <Slider x:Name="VolumeSlider" Width="150" Height="20" Margin="0,0,0,8" HorizontalAlignment="Right" VerticalAlignment="Bottom" Value="50" ValueChanged="VolumeSlider_ValueChanged"/>
+                        <Slider x:Name="VolumeSlider" Width="150" Height="20" Margin="0,0,0,8" HorizontalAlignment="Right" VerticalAlignment="Bottom" Minimum="0" Maximum="100" Value="15" ValueChanged="VolumeSlider_ValueChanged"/>
                     </DockPanel>
-                    <Button x:Name="VolumeResetButton" Content="🔄" HorizontalAlignment="Right" Margin="0,0,190,18" VerticalAlignment="Bottom" Height="20" Width="20" Click="Button_Click_2"/>
-                    <Label x:Name="VolumeLabel" Content="50" HorizontalAlignment="Right" Margin="0,0,160,15" VerticalAlignment="Bottom" />
-                    <TextBox x:Name="searchTextBox" HorizontalAlignment="Left" Margin="675,0,0,0" TextWrapping="Wrap" Text="Search..." VerticalAlignment="Top" Width="132" Height="24" IsEnabled="False" TextChanged="searchTextBox_TextChanged"/>
+                    <Button x:Name="VolumeResetButton" Content="🔄" HorizontalAlignment="Right" Margin="0,0,190,18" VerticalAlignment="Bottom" Height="20" Width="20" Click="VolumeResetButton_Click"/>
+                    <Label x:Name="VolumeLabel" Content="15" HorizontalAlignment="Right" Margin="0,0,160,15" VerticalAlignment="Bottom" />
+                    <TextBox x:Name="searchTextBox" HorizontalAlignment="Left" Margin="675,0,0,0" TextWrapping="Wrap" Text="Search..." VerticalAlignment="Top" Width="132" Height="24" IsEnabled="False" TextChanged="SearchTextBox_TextChanged"/>
                 </Grid>
             </TabItem>
             <TabItem x:Name="AwcXmlTab" Header="XML">

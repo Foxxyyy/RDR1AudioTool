@@ -10,6 +10,183 @@ namespace CodeWalker.Core.Utils
 {
     public static unsafe class VorbisHelper
     {
+        public static unsafe byte[] Decode(byte[] data, byte[] header1, byte[] header2, byte[] header3)
+        {
+            var dataPages = BufferSplit(data, 2048);
+
+            vorbis_info info;
+            vorbis_comment comment;
+            vorbis_dsp_state state;
+            vorbis_block vorbis_Block;
+
+            Vorbis.vorbis_info_init(&info);
+            Vorbis.vorbis_comment_init(&comment);
+
+            var infoPacket = new ogg_packet();
+            fixed (byte* bptr = header1)
+            {
+                infoPacket.packet = bptr;
+            }
+
+            infoPacket.bytes = new CLong(header1.Length);
+            infoPacket.b_o_s = new CLong(256);
+            infoPacket.e_o_s = new CLong(0);
+            infoPacket.granulepos = -1;
+            infoPacket.packetno = 0;
+
+            if (Vorbis.vorbis_synthesis_headerin(&info, &comment, &infoPacket) == 1)
+            {
+                throw new Exception("Unable to process info header.");
+            }
+
+            var commentPacket = new ogg_packet();
+            fixed (byte* bptr = header2)
+            {
+                commentPacket.packet = bptr;
+            }
+            commentPacket.bytes = new CLong(header2.Length);
+            commentPacket.b_o_s = new CLong(0);
+            commentPacket.e_o_s = new CLong(0);
+            commentPacket.granulepos = -1;
+            commentPacket.packetno = 0;
+
+            if (Vorbis.vorbis_synthesis_headerin(&info, &comment, &commentPacket) == 1)
+            {
+                throw new Exception("Unable to process comment header.");
+            }
+
+            var codebookPacket = new ogg_packet();
+            fixed (byte* bptr = header3)
+            {
+                codebookPacket.packet = bptr;
+            }
+            codebookPacket.bytes = new CLong(header3.Length);
+            codebookPacket.b_o_s = new CLong(0);
+            codebookPacket.e_o_s = new CLong(0);
+            codebookPacket.granulepos = -1;
+            codebookPacket.packetno = 0;
+
+            if (Vorbis.vorbis_synthesis_headerin(&info, &comment, &codebookPacket) == 1)
+            {
+                throw new Exception("Unable to process codebook header.");
+            }
+
+            var ms = new MemoryStream();
+            var writer = new BinaryWriter(ms);
+
+            if (Vorbis.vorbis_synthesis_init(&state, &info) == 0)
+            {
+                Vorbis.vorbis_block_init(&state, &vorbis_Block);
+                foreach (byte[] page in dataPages)
+                {
+                    var ms2 = new MemoryStream(page);
+                    var reader = new BinaryReader(ms2);
+                    var packetsize = reader.ReadUInt16();
+
+                    while (packetsize > 0)
+                    {
+                        var workingPacket = new ogg_packet
+                        {
+                            bytes = new CLong(packetsize)
+                        };
+
+                        var bytes = reader.ReadBytes(packetsize);
+                        if (bytes.Length == 0)
+                        {
+                            break;
+                        }
+
+                        fixed (byte* bptr = bytes)
+                        {
+                            workingPacket.packet = bptr;
+                        }
+
+                        workingPacket.b_o_s = new CLong(0);
+                        workingPacket.e_o_s = new CLong(0);
+                        workingPacket.granulepos = -1;
+                        workingPacket.packetno = 0;
+
+                        if (Vorbis.vorbis_synthesis(&vorbis_Block, &workingPacket) == 0)
+                        {
+                            int ret = Vorbis.vorbis_synthesis(&vorbis_Block, &workingPacket);
+                            Vorbis.vorbis_synthesis_blockin(&state, &vorbis_Block);
+
+                            float** pcm;
+                            int samples;
+
+                            while ((samples = Vorbis.vorbis_synthesis_pcmout(&state, &pcm)) > 0)
+                            {
+                                var remaining = samples;
+                                while (remaining > 0)
+                                {
+                                    var toProcess = Math.Min(remaining, 1024);
+                                    int blockSize = sizeof(short) * toProcess * info.channels;
+                                    short* result_ptr = stackalloc short[blockSize / sizeof(short)];
+
+                                    for (int channel = 0; channel < info.channels; channel++)
+                                    {
+                                        short* current = result_ptr + channel;
+                                        float* pcm_channel = pcm[channel];
+
+                                        for (int position = 0; position < toProcess; position++)
+                                        {
+                                            int value = (int)(pcm_channel[position] * 32768.0f);
+                                            if (value > 32767) value = 32767;
+                                            if (value < -32768) value = -32768;
+
+                                            *current = (short)value;
+                                            current += info.channels;
+                                        }
+                                    }
+
+                                    var resultBlock = new byte[blockSize];
+                                    Marshal.Copy((IntPtr)result_ptr, resultBlock, 0, resultBlock.Length);
+                                    writer.Write(resultBlock);
+
+                                    Vorbis.vorbis_synthesis_read(&state, toProcess);
+                                    remaining -= toProcess;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            break;
+                        }
+
+                        if ((reader.BaseStream.Position % 2048 == 0) || reader.BaseStream.Position >= reader.BaseStream.Length)
+                        {
+                            packetsize = 0;
+                            break;
+                        }
+                        packetsize = reader.ReadUInt16();
+                    }
+                }
+
+                Vorbis.vorbis_block_clear(&vorbis_Block);
+                Vorbis.vorbis_dsp_clear(&state);
+            }
+            else
+            {
+                throw new Exception("vorbis_synthesis_init failed");
+            }
+
+            Vorbis.vorbis_comment_clear(&comment);
+            Vorbis.vorbis_info_clear(&info);
+
+            return ms.ToArray();
+        }
+
+        private static byte[][] BufferSplit(byte[] buffer, int blockSize)
+        {
+            var blocks = new byte[(buffer.Length + blockSize - 1) / blockSize][];
+            for (int i = 0, j = 0; i < blocks.Length; i++, j += blockSize)
+            {
+                blocks[i] = new byte[Math.Min(blockSize, buffer.Length - j)];
+                Array.Copy(buffer, j, blocks[i], 0, blocks[i].Length);
+            }
+            return blocks;
+        }
+
         public static unsafe byte[] Encode(byte[] data, long channels, long sampleRate, out byte[] streamIdData, out byte[] commentData, out byte[] codebookData)
         {
             var info = new vorbis_info();

@@ -7,55 +7,44 @@ using System;
 using System.Collections.Generic;
 using System.Formats.Tar;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Channels;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Xml.Linq;
 
 namespace RDR1AudioTool
 {
-    /// <summary>
-    /// Interaction logic for ReplaceAudioWindow.xaml
-    /// </summary>
     public partial class ReplaceAudioWindow : Window
     {
         public AwcCodecType CodecType = AwcCodecType.PCM;
-
-        public byte[] PcmData = null;
-
+        public byte[]? PcmData = null;
         public int SampleCount = 0;
-
         public int SampleRate = 0;
-
         public bool StereoInput = false;
 
         public ReplaceAudioWindow(bool multiChannelFlag = false)
         {
             InitializeComponent();
             CodecSelectionBox.Items.Add("MSADPCM");
+
             if (!multiChannelFlag)
             {
                 CodecSelectionBox.Items.Add("PCM");
             }
+
             CodecSelectionBox.Items.Add("ADPCM");
             CodecSelectionBox.Items.Add("Vorbis");
+            CodecSelectionBox.Items.Add("OPUS");
             CodecSelectionBox.SelectedIndex = 0;
         }
 
         private void Button_Click(object sender, RoutedEventArgs e)
         {
-            OpenFileDialog dialog = new OpenFileDialog();
-            dialog.Filter = "Audio Files|*.wav; *.mp3";
+            var dialog = new OpenFileDialog
+            {
+                Filter = "Audio Files|*.wav; *.mp3"
+            };
 
-            if (dialog.ShowDialog().Value)
+            var result = dialog.ShowDialog();
+            if (result == true)
             {
                 FileTextBox.Text = dialog.FileName;
             }
@@ -82,6 +71,9 @@ namespace RDR1AudioTool
                     break;
                 case "Vorbis":
                     CodecType = AwcCodecType.VORBIS;
+                    break;
+                case "OPUS":
+                    CodecType = AwcCodecType.OPUS;
                     break;
             }
         }
@@ -129,21 +121,6 @@ namespace RDR1AudioTool
             WaveFileWriter.CreateWaveFile(outputPath, resampler);
         }
 
-        private static (byte[] Pcm, int SampleCount) PadToBlockSize(byte[] pcmData, int channels, int sampleCount, int blockSize = 16)
-        {
-            var pad = (blockSize - (sampleCount % blockSize)) % blockSize;
-            if (pad == 0)
-            {
-                return (pcmData, sampleCount);
-            }
-
-            var bytesPerSample = 2 * channels; //16-bit PCM
-            var padded = new byte[pcmData.Length + pad * bytesPerSample];
-            Buffer.BlockCopy(pcmData, 0, padded, 0, pcmData.Length);
-            return (padded, sampleCount + pad);
-        }
-
-
         private void ReadWavFile(string fileName)
         {
             var wavFile = new WaveFileReader(fileName);
@@ -166,7 +143,7 @@ namespace RDR1AudioTool
                 StereoInput = true;
             }
 
-            SampleCount = PcmData.Length / (2 * wavFile.WaveFormat.Channels);
+            SampleCount = (PcmData != null) ? PcmData.Length / (2 * wavFile.WaveFormat.Channels) : 0;
         }
 
         private void ReadMp3File(string fileName)
@@ -193,7 +170,7 @@ namespace RDR1AudioTool
             SampleCount = PcmData.Length / 2;
         }
 
-        private byte[] EncodeIfNeeded(IWaveProvider reader)
+        private byte[]? EncodeIfNeeded(IWaveProvider reader)
         {
             if (CodecType == AwcCodecType.ADPCM || CodecType == AwcCodecType.PCM || CodecType == AwcCodecType.MSADPCM)
             {
@@ -260,6 +237,21 @@ namespace RDR1AudioTool
                     }
                     return ms.ToArray();
                 }
+            }
+            else if (CodecType == AwcCodecType.OPUS)
+            {
+                var format = new WaveFormat(reader.WaveFormat.SampleRate, 16, reader.WaveFormat.Channels);
+                using var resampler = new MediaFoundationResampler(reader, format);
+                using var ms = new MemoryStream();
+                
+                var array = new byte[format.AverageBytesPerSecond];
+                var num = 0;
+
+                while ((num = resampler.Read(array, 0, array.Length)) > 0)
+                {
+                    ms.Write(array, 0, num);
+                }
+                return ms.ToArray();
             }
             return null;
         }

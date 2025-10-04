@@ -2,13 +2,11 @@
 
 using CodeWalker.Core.Utils;
 using NAudio.Wave;
-using OggVorbisSharp;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Xml;
 using EXP = System.ComponentModel.ExpandableObjectConverter;
@@ -20,9 +18,7 @@ namespace CodeWalker.GameFiles
     public class AwcFile
     {
         public string Name { get; set; }
-
         public string ErrorMessage { get; set; }
-
         public uint Magic { get; set; } = 0x54414441;
         public ushort Version { get; set; } = 1;
         public ushort Flags { get; set; } = 0xFF00;
@@ -30,23 +26,35 @@ namespace CodeWalker.GameFiles
         public int DataOffset { get; set; }
 
         public bool ChunkIndicesFlag
-        { get { return (Flags & 1) == 1; } set { Flags = (ushort)((Flags & 0xFFFE) + (value ? 1 : 0)); } }
+        {
+            get => (Flags & 1) == 1;
+            set => Flags = (ushort)((Flags & 0xFFFE) + (value ? 1 : 0));
+        }
+        
         public bool SingleChannelEncryptFlag
-        { get { return (Flags & 2) == 2; } set { Flags = (ushort)((Flags & 0xFFFD) + (value ? 2 : 0)); } } //This may be a flag for vorbis awcs instead
+        {
+            get => (Flags & 2) == 2;
+            set => Flags = (ushort)((Flags & 0xFFFD) + (value ? 2 : 0));
+        }
+        
         public bool MultiChannelFlag
-        { get { return (Flags & 4) == 4; } set { Flags = (ushort)((Flags & 0xFFFB) + (value ? 4 : 0)); } }
+        {
+            get => (Flags & 4) == 4;
+            set => Flags = (ushort)((Flags & 0xFFFB) + (value ? 4 : 0));
+        }
+
         public bool MultiChannelEncryptFlag
-        { get { return (Flags & 8) == 8; } set { Flags = (ushort)((Flags & 0xFFF7) + (value ? 8 : 0)); } }
+        {
+            get => (Flags & 8) == 8;
+            set => Flags = (ushort)((Flags & 0xFFF7) + (value ? 8 : 0));
+        }
 
         public ushort[] ChunkIndices { get; set; } //index of first chunk for each stream
         public AwcChunkInfo[] ChunkInfos { get; set; } // just for browsing convenience really
-
         public bool WholeFileEncrypted { get; set; }
-
         public AwcStreamInfo[] StreamInfos { get; set; }
         public AwcStream[] Streams { get; set; }
         public AwcStream MultiChannelSource { get; set; }
-
         public Dictionary<uint, AwcStream> StreamDict { get; set; }
 
         public static byte[] EncryptionKey = new byte[32]
@@ -80,7 +88,6 @@ namespace CodeWalker.GameFiles
         public void Load(byte[] data, string entry)
         {
             Name = entry;
-
             if (!string.IsNullOrEmpty(Name))
             {
                 var nl = Name.ToLowerInvariant();
@@ -95,9 +102,7 @@ namespace CodeWalker.GameFiles
                 return; //nothing to do, not enough data...
             }
 
-            var endianess = Endianess.LittleEndian;
             Magic = BitConverter.ToUInt32(data, 0);
-
             if (Magic != 0x54414441 && Magic != 0x41444154)
             {
                 if (data.Length % 4 == 0)
@@ -110,6 +115,7 @@ namespace CodeWalker.GameFiles
                 }
             }
 
+            Endianess endianess;
             switch (Magic)
             {
                 default:
@@ -123,11 +129,9 @@ namespace CodeWalker.GameFiles
                     break;
             }
 
-            using (var ms = new MemoryStream(data))
-            {
-                var r = new DataReader(ms, endianess);
-                Read(r);
-            }
+            using var ms = new MemoryStream(data);
+            var r = new DataReader(ms, endianess);
+            Read(r);
         }
 
         public byte[] Save()
@@ -198,10 +202,10 @@ namespace CodeWalker.GameFiles
                 }
             }
 
-            Streams = streams.ToArray();
+            Streams = streams.Where(s => s.DataChunk != null).ToArray();
             MultiChannelSource?.AssignMultiChannelSources(Streams);
             BuildStreamDict();
-            TestChunkOrdering(r.Length);
+            TestChunkOrdering();
         }
 
         private void Write(DataWriter w)
@@ -380,8 +384,8 @@ namespace CodeWalker.GameFiles
             {
                 if (targetCodec == AwcCodecType.ADPCM)
                 {
-                    leftData = ADPCMCodec.EncodeADPCM(leftData, (int)sampleCount);
-                    rightData = ADPCMCodec.EncodeADPCM(rightData, (int)sampleCount);
+                    leftData = AdpcmHelper.Encode(leftData, (int)sampleCount);
+                    rightData = AdpcmHelper.Encode(rightData, (int)sampleCount);
                 }
                 ReplacePCM(ref rightStream, sampleCount, sampleRate, rightData, targetCodec, MultiChannelFlag);
                 ReplacePCM(ref leftStream, sampleCount, sampleRate, leftData, targetCodec, MultiChannelFlag);
@@ -407,7 +411,7 @@ namespace CodeWalker.GameFiles
         {
             if (targetCodec == AwcCodecType.ADPCM)
             {
-                pcmAudioData = ADPCMCodec.EncodeADPCM(pcmAudioData, (int)sampleCount);
+                pcmAudioData = AdpcmHelper.Encode(pcmAudioData, (int)sampleCount);
             }
             else if (targetCodec == AwcCodecType.MSADPCM)
             {
@@ -415,7 +419,7 @@ namespace CodeWalker.GameFiles
                 var pcmSamples = new short[pcmAudioData.Length / 2];
 
                 Buffer.BlockCopy(pcmAudioData, 0, pcmSamples, 0, pcmAudioData.Length);
-                var adpcmData = MSADPCMCodec.EncodeMSADPCMMono(pcmSamples, blockAlign);
+                var adpcmData = MsAdpcmHelper.EncodeMSADPCMMono(pcmSamples, blockAlign);
 
                 var numChannels = 1; //Make sure it's always 1
                 var bitsPerSample = 4;
@@ -445,8 +449,8 @@ namespace CodeWalker.GameFiles
 
                 for (int i = 0; i < 7; i++)
                 {
-                    bw.Write(MSADPCMCodec.Coefs[i, 0]);
-                    bw.Write(MSADPCMCodec.Coefs[i, 1]);
+                    bw.Write(MsAdpcmHelper.Coefs[i, 0]);
+                    bw.Write(MsAdpcmHelper.Coefs[i, 1]);
                 }
 
                 //Data chunk
@@ -466,6 +470,61 @@ namespace CodeWalker.GameFiles
             {
                 throw new NotImplementedException("Vorbis support is not implemented for single streams, use PCM/ADPCM for RDR2 or MSADPCM for RDR1");
             }
+            else if (targetCodec == AwcCodecType.OPUS)
+            {
+                var pcmSamples = new short[pcmAudioData.Length / 2];
+                Buffer.BlockCopy(pcmAudioData, 0, pcmSamples, 0, pcmAudioData.Length);
+
+                var frameSamples = 960; //20ms @ 48kHz
+                var frameSizeBytes = 80;
+                var frames = new List<byte[]>();
+
+                using var encoder = OpusEncoder.Create((int)sampleRate, 1); //2 for stereo
+                encoder.SetBitrate(64000);
+
+                for (int pos = 0; pos < pcmSamples.Length; pos += frameSamples)
+                {
+                    var len = Math.Min(frameSamples, pcmSamples.Length - pos);
+                    var frame = new short[len * 2];
+                    Array.Copy(pcmSamples, pos, frame, 0, len);
+
+                    var packet = encoder.Encode(frame, len);
+                    if (packet.Length < frameSizeBytes)
+                    {
+                        Array.Resize(ref packet, frameSizeBytes); //Pad
+                    }
+                    frames.Add(packet);
+                }
+
+                using var ms = new MemoryStream();
+                using var bw = new BinaryWriter(ms);
+
+                //Block header (per channel, 0x10)
+                bw.Write((uint)0);                              //start_entry
+                bw.Write((uint)frames.Count);                   //entries
+                bw.Write((uint)0);                              //channel_skip
+                bw.Write((uint)(frames.Count * frameSamples));  //channel_samples
+
+                //Extra header (0x70, D11A)
+                bw.Write(0x41313144);                    //"D11A"
+                bw.Write((ushort)frameSizeBytes);        //Bytes per packet
+                bw.Write((ushort)frameSamples);          //PCM samples per frame
+                bw.Write((ushort)0x0101);                //OPUS flags
+                bw.Write((ushort)sampleRate);            //Sample rate
+                bw.Write(0x45313144);                    //"D11E"
+
+                for (int i = 0x10; i < 0x70; i++)
+                {
+                    bw.Write((byte)0x77);
+                }
+
+                //Payload
+                foreach (var f in frames)
+                {
+                    bw.Write(f);
+                }
+                pcmAudioData = ms.ToArray();
+            }
 
             AwcStream targetStream = null;
             foreach (AwcStream stream in Streams)
@@ -482,23 +541,19 @@ namespace CodeWalker.GameFiles
                 throw new InvalidOperationException($"Unable to find stream {streamHash}");
             }
 
-            if (targetCodec == AwcCodecType.ADPCM || targetCodec == AwcCodecType.PCM || targetCodec == AwcCodecType.MSADPCM)
+            switch (targetCodec)
             {
-                ReplacePCM(ref targetStream, sampleCount, sampleRate, pcmAudioData, targetCodec, MultiChannelFlag);
-            }
-            else if (targetCodec == AwcCodecType.VORBIS)
-            {
-                throw new NotImplementedException("Vorbis support is not implemented");
-                //ReplaceVorbis(ref targetStream, sampleCount, sampleRate, pcmAudioData, false);
-            }
-
-            for (int i = 0; i < Streams.Length; i++)
-            {
-                var stream = Streams[i];
-                if (stream.Hash == streamHash)
-                {
-                    stream = targetStream;
-                }
+                case AwcCodecType.PCM:
+                case AwcCodecType.ADPCM:
+                case AwcCodecType.MSADPCM:
+                    ReplacePCM(ref targetStream, sampleCount, sampleRate, pcmAudioData, targetCodec, MultiChannelFlag);
+                    break;
+                case AwcCodecType.VORBIS:
+                    throw new NotImplementedException("Vorbis support is not implemented");
+                case AwcCodecType.OPUS:
+                    throw new NotImplementedException("OPUS support is not implemented");
+                default:
+                    throw new NotImplementedException("This codec is not implemented");
             }
         }
 
@@ -627,7 +682,7 @@ namespace CodeWalker.GameFiles
             return chunks.ToArray();
         }
 
-        public void TestChunkOrdering(long datalength)
+        public void TestChunkOrdering()
         {
             if (Streams == null) return;
             if (StreamInfos == null) return;
@@ -874,9 +929,9 @@ namespace CodeWalker.GameFiles
 
     public enum AwcCodecType
     {
-        PCM = 0,  //PCM 16 bit little endian
+        PCM = 0,  //PCM 16-bit little endian
         ADPCM = 4, //IMA PC
-        VORBIS = 8, //PC only, RDR1
+        VORBIS = 8, //RDR2 PC
         OPUS = 13, //RDR1 PC
         MSADPCM = 17 //RDR1 PC
     }
@@ -886,14 +941,14 @@ namespace CodeWalker.GameFiles
     {
         public uint RawVal { get; set; }
         public uint ChunkCount { get; set; }
-        public uint Id { get; set; }
+        public MetaHash Id { get; set; }
         public AwcChunkInfo[] Chunks { get; set; }
 
         public void Read(DataReader r)
         {
             RawVal = r.ReadUInt32();
-            ChunkCount = (RawVal >> 29);
-            Id = (RawVal & 0x1FFFFFFF);
+            ChunkCount = RawVal >> 29;
+            Id = RawVal & 0x1FFFFFFF;
             Chunks = new AwcChunkInfo[ChunkCount];
         }
 
@@ -906,7 +961,7 @@ namespace CodeWalker.GameFiles
 
         public override string ToString()
         {
-            return Id.ToString("X") + ": " + ChunkCount.ToString() + " chunks";
+            return Id.ToString() + ": " + ChunkCount.ToString() + " chunks";
         }
     }
 
@@ -1020,7 +1075,7 @@ namespace CodeWalker.GameFiles
         {
             get
             {
-                return FormatChunk?.SamplesPerSecond ?? StreamFormat?.SamplesPerSecond ?? VorbisFormatChunk?.SamplesPerSecond ?? 0;
+                return FormatChunk?.SamplesPerSecond ?? StreamFormat?.SamplesPerSecond ?? StreamFormatChunk?.Channels[0]?.SamplesPerSecond ?? VorbisFormatChunk?.SamplesPerSecond ?? 0;
             }
         }
 
@@ -1028,7 +1083,7 @@ namespace CodeWalker.GameFiles
         {
             get
             {
-                return (int)(FormatChunk?.Samples ?? StreamFormat?.Samples ?? VorbisFormatChunk?.Samples ?? 0);
+                return (int)(FormatChunk?.Samples ?? StreamFormat?.Samples ?? StreamFormatChunk?.Channels[0]?.Samples ?? VorbisFormatChunk?.Samples ?? 0);
             }
         }
 
@@ -1121,6 +1176,13 @@ namespace CodeWalker.GameFiles
                     hz = StreamFormat.SamplesPerSecond;
                 }
 
+                if (StreamFormatChunk != null)
+                {
+                    var channel = StreamFormatChunk.Channels[0];
+                    fc = channel.Codec;
+                    hz = channel.SamplesPerSecond;
+                }
+
                 if (VorbisFormatChunk != null)
                 {
                     fc = VorbisFormatChunk.Codec;
@@ -1136,28 +1198,11 @@ namespace CodeWalker.GameFiles
                     case AwcCodecType.MSADPCM:
                     case AwcCodecType.OPUS:
                         break;
-
                     default:
                         codec = "Unknown";
                         break;
                 }
-
                 return codec + ((hz > 0) ? (", " + hz.ToString() + " Hz") : "");
-            }
-        }
-
-        public AwcCodecType Type
-        {
-            get
-            {
-                var fc = AwcCodecType.PCM;
-                if (FormatChunk != null)
-                    fc = FormatChunk.Codec;
-                if (StreamFormat != null)
-                    fc = StreamFormat.Codec;
-                if (VorbisFormatChunk != null)
-                    fc = VorbisFormatChunk.Codec;
-                return fc;
             }
         }
 
@@ -1376,25 +1421,23 @@ namespace CodeWalker.GameFiles
 
         public static AwcChunk CreateChunk(AwcChunkInfo info)
         {
-            switch (info.Type)
+            return info.Type switch
             {
-                case AwcChunkType.data: return new AwcDataChunk(info);
-                case AwcChunkType.format: return new AwcFormatChunk(info);
-                case AwcChunkType.peak: return new AwcPeakChunk(info);
-                case AwcChunkType.mid: return new AwcMIDIChunk(info);
-                case AwcChunkType.gesture: return new AwcGestureChunk(info);
-                case AwcChunkType.granulargrains: return new AwcGranularGrainsChunk(info);
-                case AwcChunkType.granularloops: return new AwcGranularLoopsChunk(info);
-                case AwcChunkType.markers: return new AwcMarkersChunk(info);
-                case AwcChunkType.streamformat: return new AwcStreamFormatChunk(info);
-                case AwcChunkType.seektable: return new AwcSeekTableChunk(info);
-                case AwcChunkType.vorbisheader: return new AwcVorbisChunk(info);
-                case AwcChunkType.format_vorbis: return new AwcVorbisFormatChunk(info);
-                case AwcChunkType.animation:
-                case AwcChunkType.rave_anim_data:
-                    return new AwcAnimationChunk(info);
-            }
-            return null;
+                AwcChunkType.data => new AwcDataChunk(info),
+                AwcChunkType.format => new AwcFormatChunk(info),
+                AwcChunkType.peak => new AwcPeakChunk(info),
+                AwcChunkType.mid => new AwcMIDIChunk(info),
+                AwcChunkType.gesture => new AwcGestureChunk(info),
+                AwcChunkType.granulargrains => new AwcGranularGrainsChunk(info),
+                AwcChunkType.granularloops => new AwcGranularLoopsChunk(info),
+                AwcChunkType.markers => new AwcMarkersChunk(info),
+                AwcChunkType.streamformat => new AwcStreamFormatChunk(info),
+                AwcChunkType.seektable => new AwcSeekTableChunk(info),
+                AwcChunkType.vorbisheader => new AwcVorbisChunk(info),
+                AwcChunkType.format_vorbis => new AwcVorbisFormatChunk(info),
+                AwcChunkType.animation or AwcChunkType.rave_anim_data => new AwcAnimationChunk(info),
+                _ => null,
+            };
         }
 
         public void ExpandChunks()
@@ -1633,7 +1676,7 @@ namespace CodeWalker.GameFiles
 
         public override string ToString()
         {
-            var hash = "0x" + (StreamInfo?.Id.ToString("X") ?? "0").PadLeft(8, '0') + ": ";
+            var hash = StreamInfo?.Id.ToString() + ": ";
             if (FormatChunk != null)
                 return hash + FormatChunk?.ToString() ?? "AwcAudio";
             if (VorbisFormatChunk != null)
@@ -1683,57 +1726,21 @@ namespace CodeWalker.GameFiles
         public byte[] GetPcmData()
         {
             var data = GetRawData();
-            var codec = StreamFormat?.Codec ?? FormatChunk?.Codec ?? VorbisFormatChunk?.Codec ?? AwcCodecType.PCM;
+            var codec = StreamFormat?.Codec ?? FormatChunk?.Codec ?? StreamFormatChunk?.Channels[0]?.Codec ?? VorbisFormatChunk?.Codec ?? AwcCodecType.PCM;
 
-            if (codec == AwcCodecType.MSADPCM)
+            switch (codec)
             {
-                using var ms = new MemoryStream(data);
-                using var br = new BinaryReader(ms);
-
-                //Read MSADPCM header (first 0x4A bytes contain fmt info)
-                var header = br.ReadBytes(0x4A);
-                var brHeader = new BinaryReader(new MemoryStream(header));
-
-                brHeader.BaseStream.Position = 0x18;
-                var samplesHeader = brHeader.ReadInt32();
-
-                brHeader.BaseStream.Position = 0x20;
-                var blockSize = brHeader.ReadInt16();
-
-                //Next comes audio data size and then actual samples
-                var audioSize = br.ReadInt32();
-                var block_data = br.ReadBytes(audioSize);
-
-                var samplesPerBlock = (blockSize - 7) * 2 + 2;
-                var samplesFilled = 0;
-                var decodedAudio = new List<byte>();
-
-                while (samplesFilled < SampleCount)
-                {
-                    var samplesToDo = Math.Min(samplesPerBlock, SampleCount - samplesFilled);
-                    var chunkData = MSADPCMCodec.DecodeMSADPCMMono(
-                        block_data,
-                        channelSpacing: 1,
-                        firstSample: samplesFilled,
-                        samplesToDo: samplesToDo,
-                        bytesPerFrame: blockSize
-                    );
-
-                    decodedAudio.AddRange(chunkData);
-                    samplesFilled += samplesToDo;
-                }
-                return decodedAudio.ToArray();
-            }
-            else if (codec == AwcCodecType.ADPCM) //Just convert ADPCM to PCM for compatibility reasons
-            {
-                data = ADPCMCodec.DecodeADPCM(data, SampleCount);
-            }
-            else if (codec == AwcCodecType.VORBIS)
-            {
-                if (VorbisFormatChunk != null)
-                    data = VorbisCodec.DecodeVorbis(data, VorbisFormatChunk.VorbisChunk.DataSection1, VorbisFormatChunk.VorbisChunk.DataSection2, VorbisFormatChunk.VorbisChunk.DataSection3);
-                else
-                    data = VorbisCodec.DecodeVorbis(data, VorbisChunk.DataSection1, VorbisChunk.DataSection2, VorbisChunk.DataSection3);
+                case AwcCodecType.ADPCM: //Just convert ADPCM to PCM for compatibility reasons
+                    return AdpcmHelper.Decode(data, SampleCount);
+                case AwcCodecType.MSADPCM:
+                    return MsAdpcmHelper.Decode(data, SampleCount);
+                case AwcCodecType.OPUS:
+                    return OpusHelper.Decode(data, (int)StreamFormatChunk.ChannelCount, StreamFormatChunk.BlockCount, SamplesPerSecond);
+                case AwcCodecType.VORBIS:
+                    if (VorbisFormatChunk != null)
+                        return VorbisHelper.Decode(data, VorbisFormatChunk.VorbisChunk.DataSection1, VorbisFormatChunk.VorbisChunk.DataSection2, VorbisFormatChunk.VorbisChunk.DataSection3);
+                    else
+                        return VorbisHelper.Decode(data, VorbisChunk.DataSection1, VorbisChunk.DataSection2, VorbisChunk.DataSection3);
             }
             return data;
         }
@@ -1807,67 +1814,63 @@ namespace CodeWalker.GameFiles
 
         public void ParseWavFile(byte[] wav)
         {
-            using (var ms = new MemoryStream(wav))
+            using var ms = new MemoryStream(wav);
+            using WaveFileReader reader = new WaveFileReader(ms);
+            var pcmData = new byte[reader.Length];
+            reader.Read(pcmData, 0, (int)reader.Length);
+
+            if (reader.WaveFormat.Encoding != WaveFormatEncoding.Pcm)
+                throw new InvalidOperationException("Only PCM format .wav files supported!");
+            if (reader.WaveFormat.Channels != 1)
+                throw new InvalidOperationException("Only mono .wav files supported!");
+
+            var sampleCount = pcmData.Length / (reader.WaveFormat.BitsPerSample / 8);
+            var codec = StreamFormat?.Codec ?? FormatChunk?.Codec ?? VorbisFormatChunk?.Codec ?? AwcCodecType.PCM;
+
+            if (codec == AwcCodecType.ADPCM && reader.WaveFormat.Encoding != WaveFormatEncoding.Adpcm) //Convert PCM wav to ADPCM where required
             {
-                using (WaveFileReader reader = new WaveFileReader(ms))
+                switch (reader.WaveFormat.BitsPerSample)
                 {
-                    var pcmData = new byte[reader.Length];
-                    reader.Read(pcmData, 0, (int)reader.Length);
+                    case 8:
+                        throw new InvalidOperationException("Please encode PCM as 16 bit signed before importing or choose PCM instead.");
+                    case 16:
+                        pcmData = AdpcmHelper.Encode(pcmData, sampleCount);
+                        break;
 
-                    if (reader.WaveFormat.Encoding != WaveFormatEncoding.Pcm)
-                        throw new InvalidOperationException("Only PCM format .wav files supported!");
-                    if (reader.WaveFormat.Channels != 1)
-                        throw new InvalidOperationException("Only mono .wav files supported!");
-
-                    var sampleCount = pcmData.Length / (reader.WaveFormat.BitsPerSample / 8);
-                    var codec = StreamFormat?.Codec ?? FormatChunk?.Codec ?? VorbisFormatChunk?.Codec ?? AwcCodecType.PCM;
-
-                    if (codec == AwcCodecType.ADPCM && reader.WaveFormat.Encoding != NAudio.Wave.WaveFormatEncoding.Adpcm) //Convert PCM wav to ADPCM where required
-                    {
-                        switch (reader.WaveFormat.BitsPerSample)
-                        {
-                            case 8:
-                                throw new InvalidOperationException("Please encode PCM as 16 bit signed before importing or choose PCM instead.");
-                            case 16:
-                                pcmData = ADPCMCodec.EncodeADPCM(pcmData, sampleCount);
-                                break;
-
-                            case 32:
-                                throw new InvalidOperationException("Please encode PCM as 16 bit signed before importing or choose PCM instead.");
-                        }
-                    }
-
-                    if (Awc.MultiChannelFlag)
-                    {
-                        if (StreamFormat != null)
-                        {
-                            StreamFormat.Samples = (uint)sampleCount;
-                            StreamFormat.SamplesPerSecond = (ushort)reader.WaveFormat.SampleRate;
-
-                            DataChunk = new AwcDataChunk(null)
-                            {
-                                Data = pcmData
-                            };
-                        }
-                    }
-                    else
-                    {
-                        if (FormatChunk != null)
-                        {
-                            FormatChunk.Samples = (uint)sampleCount;
-                            FormatChunk.SamplesPerSecond = (ushort)reader.WaveFormat.SampleRate;
-                        }
-
-                        if (VorbisFormatChunk != null)
-                        {
-                            VorbisFormatChunk.Samples = (uint)sampleCount;
-                            VorbisFormatChunk.SamplesPerSecond = (ushort)reader.WaveFormat.SampleRate;
-                        }
-
-                        DataChunk ??= new AwcDataChunk(new AwcChunkInfo() { Type = AwcChunkType.data });
-                        DataChunk.Data = pcmData;
-                    }
+                    case 32:
+                        throw new InvalidOperationException("Please encode PCM as 16 bit signed before importing or choose PCM instead.");
                 }
+            }
+
+            if (Awc.MultiChannelFlag)
+            {
+                if (StreamFormat != null)
+                {
+                    StreamFormat.Samples = (uint)sampleCount;
+                    StreamFormat.SamplesPerSecond = (ushort)reader.WaveFormat.SampleRate;
+
+                    DataChunk = new AwcDataChunk(null)
+                    {
+                        Data = pcmData
+                    };
+                }
+            }
+            else
+            {
+                if (FormatChunk != null)
+                {
+                    FormatChunk.Samples = (uint)sampleCount;
+                    FormatChunk.SamplesPerSecond = (ushort)reader.WaveFormat.SampleRate;
+                }
+
+                if (VorbisFormatChunk != null)
+                {
+                    VorbisFormatChunk.Samples = (uint)sampleCount;
+                    VorbisFormatChunk.SamplesPerSecond = (ushort)reader.WaveFormat.SampleRate;
+                }
+
+                DataChunk ??= new AwcDataChunk(new AwcChunkInfo() { Type = AwcChunkType.data });
+                DataChunk.Data = pcmData;
             }
         }
 
@@ -1881,10 +1884,9 @@ namespace CodeWalker.GameFiles
 
         public unsafe Stream GetOggStream()
         {
-            byte[] dataVorbis = GetRawData();
-
-            MemoryStream stream = new MemoryStream();
-            BinaryWriter w = new BinaryWriter(stream);
+            var dataVorbis = GetRawData();
+            var stream = new MemoryStream();
+            var w = new BinaryWriter(stream);
 
             w.Write(VorbisChunk.DataSection1.Length);
             w.Write(VorbisChunk.DataSection1);
@@ -1894,28 +1896,19 @@ namespace CodeWalker.GameFiles
             w.Write(VorbisChunk.DataSection3);
             w.Write(dataVorbis);
 
-            //OggVorbisSharp.vorbis_info info = new OggVorbisSharp.vorbis_info();
-
-            //OggVorbisSharp.Vorbis.vorbis_info_init(&info);
-
-            //w.Write("OggS".ToCharArray());
-            //w.Write((byte)0);
-            // w.Write((byte)0x02);
-            //w.Write((Int64)0);
-
             stream.Position = 0;
             return stream;
         }
 
         public void ParseOggFile(byte[] ogg)
         {
-            MemoryStream oggStream = new MemoryStream(ogg);
-            BinaryReader reader = new BinaryReader(oggStream);
+            var oggStream = new MemoryStream(ogg);
+            var reader = new BinaryReader(oggStream);
             var length = reader.ReadInt32();
             var data1 = reader.ReadBytes(length);
 
             var data1Stream = new MemoryStream(data1);
-            BinaryReader data1reader = new BinaryReader(data1Stream);
+            var data1reader = new BinaryReader(data1Stream);
             data1Stream.Position += 7;
             var version = data1reader.ReadInt32();
             var channels = data1reader.ReadByte();
@@ -1934,7 +1927,6 @@ namespace CodeWalker.GameFiles
             {
                 if (StreamFormat != null)
                 {
-                    //StreamFormat.Samples = (uint)sampleCount;
                     StreamFormat.SamplesPerSecond = (ushort)sampleRate;
                     DataChunk = new AwcDataChunk(null)
                     {
@@ -1946,13 +1938,11 @@ namespace CodeWalker.GameFiles
             {
                 if (FormatChunk != null)
                 {
-                    //FormatChunk.Samples = (uint)sampleCount;
                     FormatChunk.SamplesPerSecond = (ushort)sampleRate;
                 }
 
                 if (VorbisFormatChunk != null)
                 {
-                    //VorbisFormatChunk.Samples = (uint)sampleCount;
                     VorbisFormatChunk.SamplesPerSecond = (ushort)sampleRate;
                 }
                 DataChunk ??= new AwcDataChunk(new AwcChunkInfo() { Type = AwcChunkType.data });
@@ -1963,10 +1953,9 @@ namespace CodeWalker.GameFiles
 
     public enum AwcChunkType : byte
     {
-        //should be the last byte of the hash of the name.
         data = 0x55,            // 0x5EB5E655
         format = 0xFA,          // 0x6061D4FA
-        animation = 0x5C,       // 0x938C925C, not correct?
+        animation = 0x5C,       // 0x938C925C
         peak = 0x36,            // 0x8B946236
         mid = 0x68,             // 0x71DE4C68
         gesture = 0x2B,         // 0x23097A2B
@@ -1977,7 +1966,7 @@ namespace CodeWalker.GameFiles
         seektable = 0xA3,       // 0x021E86A3
         vorbisheader = 0x7F,    // 0x20D0EF7F
         format_vorbis = 0x76,   // 0xA4609776
-        rave_anim_data = 0x81   // 0xC8140E81, not correct?
+        rave_anim_data = 0x81   // 0xC8140E81
     }
 
     [TC(typeof(EXP))]
@@ -2278,14 +2267,14 @@ namespace CodeWalker.GameFiles
     public class AwcStreamFormatChunk : AwcChunk
     {
         public override int ChunkSize => 12 + (Channels?.Length ?? 0) * 16;
-
         public uint BlockCount { get; set; }
         public uint BlockSize { get; set; }
         public uint ChannelCount { get; set; }
         public AwcStreamFormat[] Channels { get; set; }
 
         public AwcStreamFormatChunk(AwcChunkInfo info) : base(info)
-        { }
+        {
+        }
 
         public override void Read(DataReader r)
         {
@@ -2301,17 +2290,6 @@ namespace CodeWalker.GameFiles
                 channels.Add(itemInfo);
             }
             Channels = channels.ToArray();
-
-            //switch (BlockSize)
-            //{
-            //    case 1032192:
-            //    case 524288:
-            //    case 7225344:
-            //    case 307200:
-            //        break;
-            //    default:
-            //        break;//no hit
-            //}
         }
 
         public override void Write(DataWriter w)
@@ -2365,32 +2343,6 @@ namespace CodeWalker.GameFiles
             Codec = (AwcCodecType)r.ReadByte();
             Unused1 = r.ReadByte();
             LoopBegin = r.ReadUInt16();
-
-            #region test
-
-            //switch (Codec)
-            //{
-            //    case AwcCodecFormat.ADPCM:
-            //        break;
-            //    default:
-            //        break;//no hit
-            //}
-            //switch (Unused1)
-            //{
-            //    case 0:
-            //        break;
-            //    default:
-            //        break;//no hit
-            //}
-            //switch (Unused2)
-            //{
-            //    case 0:
-            //        break;
-            //    default:
-            //        break;//no hit
-            //}
-
-            #endregion test
         }
 
         public void Write(DataWriter w)
@@ -3496,617 +3448,17 @@ namespace CodeWalker.GameFiles
         }
     }
 
-    public class MSADPCMCodec
-    {
-        private static short[] adpcmCoef = new short[16];
-        private static short adpcmHistory1_16 = 0;
-        private static short adpcmHistory2_16 = 0;
-        private static int adpcmScale = 0;
-
-        public static readonly short[,] Coefs =
-        {
-            { 256, 0 },
-            { 512, -256 },
-            { 0, 0 },
-            { 192, 64 },
-            { 240, 0 },
-            { 460, -208 },
-            { 392, -232 }
-        };
-
-        public static readonly short[] AdaptationTable =
-        {
-            230, 230, 230, 230,
-            307, 409, 512, 614,
-            768, 614, 512, 409,
-            307, 230, 230, 230
-        };
-
-        private static int Clamp16(int val)
-        {
-            if (val > 32767) return 32767;
-            else if (val < -32768) return -32768;
-            else return val;
-        }
-
-        private static void WriteShortToByteArray(byte[] buffer, int index, short value)
-        {
-            buffer[index] = (byte)(value & 0xFF);
-            buffer[index + 1] = (byte)((value >> 8) & 0xFF);
-        }
-
-        private static short MSADPCMExpandNibbleShr(byte currentByte, int shift)
-        {
-            int code = (currentByte >> shift) & 0x0F;
-            if ((code & 0x08) != 0) code -= 16;
-
-            int predicted = adpcmHistory1_16 * adpcmCoef[0] + adpcmHistory2_16 * adpcmCoef[1];
-            predicted >>= 8;
-            predicted += code * adpcmScale;
-            predicted = Clamp16(predicted);
-
-            adpcmHistory2_16 = adpcmHistory1_16;
-            adpcmHistory1_16 = (short)predicted;
-
-            adpcmScale = (AdaptationTable[code & 0x0F] * adpcmScale) >> 8;
-            if (adpcmScale < 16) adpcmScale = 16;
-
-            return (short)predicted;
-        }
-
-        private static short MSADPCMExpandNibbleDiv(byte currentByte, int shift)
-        {
-            int code = (currentByte >> shift) & 0x0F;
-            if ((code & 0x08) != 0) code -= 16;
-
-            int predicted = adpcmHistory1_16 * adpcmCoef[0] + adpcmHistory2_16 * adpcmCoef[1];
-            predicted /= 256;
-            predicted += code * adpcmScale;
-            predicted = Clamp16(predicted);
-
-            adpcmHistory2_16 = adpcmHistory1_16;
-            adpcmHistory1_16 = (short)predicted;
-
-            adpcmScale = (AdaptationTable[code & 0x0F] * adpcmScale) / 256;
-            if (adpcmScale < 16) adpcmScale = 16;
-
-            return (short)predicted;
-        }
-
-        public static byte[] DecodeMSADPCMMono(byte[] data, int channelSpacing, int firstSample, int samplesToDo, int bytesPerFrame)
-        {
-            var br = new BinaryReader(new MemoryStream(data));
-            int framesIn;
-            int samplesPerFrame = (bytesPerFrame - 7) * 2 + 2;
-            bool isShr = true;
-
-            framesIn = firstSample / samplesPerFrame;
-            br.BaseStream.Position = framesIn * bytesPerFrame;
-            firstSample %= samplesPerFrame;
-
-            int index = framesIn * bytesPerFrame;
-            if (index >= data.Length)
-            {
-                index = (framesIn - 1) * bytesPerFrame;
-            }
-
-            if (firstSample == 0)
-            {
-                int coefIndex = data[index] & 0x07;
-                adpcmCoef[0] = Coefs[coefIndex, 0];
-                adpcmCoef[1] = Coefs[coefIndex, 1];
-                adpcmScale = BitConverter.ToInt16(data, index + 1);
-                adpcmHistory1_16 = BitConverter.ToInt16(data, index + 3);
-                adpcmHistory2_16 = BitConverter.ToInt16(data, index + 5);
-            }
-
-            byte[] outBuffer = new byte[samplesToDo * 2 * channelSpacing];
-            int outIndex = 0;
-
-            if (firstSample == 0 && samplesToDo > 0)
-            {
-                WriteShortToByteArray(outBuffer, outIndex, adpcmHistory2_16);
-                outIndex += channelSpacing * 2;
-                firstSample++;
-                samplesToDo--;
-            }
-
-            if (firstSample == 1 && samplesToDo > 0)
-            {
-                WriteShortToByteArray(outBuffer, outIndex, adpcmHistory1_16);
-                outIndex += channelSpacing * 2;
-                firstSample++;
-                samplesToDo--;
-            }
-
-            for (int i = firstSample; i < firstSample + samplesToDo; i++)
-            {
-                byte currentByte = data[index + 7 + (i - 2) / 2];
-                int shift = (i % 2 == 0) ? 4 : 0;
-                short decodedSample = isShr ? MSADPCMExpandNibbleShr(currentByte, shift) : MSADPCMExpandNibbleDiv(currentByte, shift);
-
-                WriteShortToByteArray(outBuffer, outIndex, decodedSample);
-                outIndex += channelSpacing * 2;
-            }
-            return outBuffer;
-        }
-
-        private static byte[] EncodeBlock(short[] samples, int offset, int count, int blockSize) //Encodes a single ADPCM block from PCM16
-        {
-            //Pick best predictor
-            var bestPredictor = 0;
-            var bestError = long.MaxValue;
-
-            for (int i = 0; i < 7; i++)
-            {
-                int c1 = Coefs[i, 0];
-                int c2 = Coefs[i, 1];
-                var predicted = (samples[offset + 1] * c1 + samples[offset] * c2) >> 8;
-                var diff = samples[offset + 1] - predicted;
-                long err = Math.Abs(diff);
-
-                if (err < bestError)
-                {
-                    bestError = err;
-                    bestPredictor = i;
-                }
-            }
-
-            var predictor = bestPredictor;
-            int coef1 = Coefs[predictor, 0];
-            int coef2 = Coefs[predictor, 1];
-
-            //Estimate samples
-            var s2 = samples[offset];     //Older
-            var s1 = samples[offset + 1]; //Newer
-
-            //Initial delta (step size)
-            var delta = (short)Math.Max(16, Math.Abs(s1 - s2));
-            
-            var buffer = new byte[blockSize];
-            buffer[0] = (byte)predictor;
-            BitConverter.GetBytes(delta).CopyTo(buffer, 1);
-            BitConverter.GetBytes(s1).CopyTo(buffer, 3); //Sample 0
-            BitConverter.GetBytes(s2).CopyTo(buffer, 5); //Sample 1
-
-            int scale = delta;
-            var bufIndex = 7;
-            var outByte = 0;
-            var highNibble = true;
-
-            for (int i = 2; i < count; i++)
-            {
-                int pcm = samples[offset + i];
-                var predicted = (s1 * coef1 + s2 * coef2) >> 8;
-                
-                //Brute-force search best nibble
-                int bestNibble = 0;
-                int bestErr = int.MaxValue;
-                int bestRecon = 0;
-
-                for (int cand = -8; cand <= 7; cand++)
-                {
-                    int recon = predicted + cand * scale;
-                    recon = Clamp16(recon);
-                    int err = Math.Abs(pcm - recon);
-
-                    if (err < bestErr)
-                    {
-                        bestErr = err;
-                        bestNibble = cand;
-                        bestRecon = recon;
-                    }
-                }
-
-                int nibble = bestNibble;
-
-                // Update history with best reconstruction
-                s2 = s1;
-                s1 = (short)bestRecon;
-
-                // Update scale
-                scale = (scale * AdaptationTable[nibble & 0x0F]) >> 8;
-                if (scale < 16) scale = 16;
-
-                // Pack nibble
-                if (highNibble)
-                {
-                    outByte = (nibble & 0x0F) << 4;
-                    highNibble = false;
-                }
-                else
-                {
-                    outByte |= (nibble & 0x0F);
-                    buffer[bufIndex++] = (byte)outByte;
-                    highNibble = true;
-                }
-            }
-
-            if (!highNibble)
-            {
-                buffer[bufIndex++] = (byte)outByte;
-            }
-            return buffer;
-        }
-
-        public static byte[] EncodeMSADPCMMono(short[] pcmSamples, int blockSize) //Encodes a full PCM16 moo stream to MSADPCM
-        {
-            if (pcmSamples.Length < 2)
-            {
-                throw new ArgumentException("Needs at least 2 samples per block");
-            }
-
-            var samplesPerBlock = (blockSize - 7) * 2 + 2;
-            var ms = new MemoryStream();
-            var samplesDone = 0;
-
-            while (samplesDone < pcmSamples.Length)
-            {
-                var cnt = Math.Min(samplesPerBlock, pcmSamples.Length - samplesDone);
-                var block = EncodeBlock(pcmSamples, samplesDone, cnt, blockSize);
-                ms.Write(block, 0, block.Length);
-                samplesDone += cnt;
-            }
-            return ms.ToArray();
-        }
-    }
-
-    public class ADPCMCodec
-    {
-        private static int[] ima_index_table =
-        {
-            -1, -1, -1, -1, 2, 4, 6, 8,
-            -1, -1, -1, -1, 2, 4, 6, 8
-        };
-
-        private static short[] ima_step_table =
-        {
-            7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
-            19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
-            50, 55, 60, 66, 73, 80, 88, 97, 107, 118,
-            130, 143, 157, 173, 190, 209, 230, 253, 279, 307,
-            337, 371, 408, 449, 494, 544, 598, 658, 724, 796,
-            876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
-            2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358,
-            5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899,
-            15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767
-        };
-
-        private static int clip(int value, int min, int max)
-        {
-            if (value < min) return min;
-            if (value > max) return max;
-            return value;
-        }
-
-        public static byte[] DecodeADPCM(byte[] data, int sampleCount)
-        {
-            byte[] dataPCM = new byte[data.Length * 4];
-            int predictor = 0, stepIndex = 0;
-            int readingOffset = 0, writingOffset = 0, bytesInBlock = 0;
-
-            void parseNibble(byte nibble)
-            {
-                var step = ima_step_table[stepIndex];
-                int diff = ((((nibble & 7) << 1) + 1) * step) >> 3;
-                if ((nibble & 8) != 0) diff = -diff;
-                predictor = predictor + diff;
-                stepIndex = clip(stepIndex + ima_index_table[nibble], 0, 88);
-                int samplePCM = clip(predictor, -32768, 32767);
-
-                dataPCM[writingOffset] = (byte)(samplePCM & 0xFF);
-                dataPCM[writingOffset + 1] = (byte)((samplePCM >> 8) & 0xFF);
-                writingOffset += 2;
-            }
-
-            while ((readingOffset < data.Length) && (sampleCount > 0))
-            {
-                if (bytesInBlock == 0)
-                {
-                    stepIndex = clip(data[readingOffset], 0, 88);
-                    predictor = BitConverter.ToInt16(data, readingOffset + 2);
-                    bytesInBlock = 2044;
-                    readingOffset += 4;
-                }
-                else
-                {
-                    parseNibble((byte)(data[readingOffset] & 0x0F));
-                    parseNibble((byte)((data[readingOffset] >> 4) & 0x0F));
-                    bytesInBlock--;
-                    sampleCount -= 2;
-                    readingOffset++;
-                }
-            }
-
-            return dataPCM;
-        }
-
-        public static byte[] EncodeADPCM(byte[] data, int sampleCount)
-        {
-            byte[] dataPCM = new byte[data.Length / 4];
-
-            int predictor = 0, stepIndex = 0;
-            int readingOffset = 0, writingOffset = 0, bytesInBlock = 0;
-
-            short readSample()
-            {
-                var s = BitConverter.ToInt16(data, readingOffset);
-                readingOffset += 2;
-                return s;
-            }
-
-            void writeInt16(short v)
-            {
-                var ba = BitConverter.GetBytes(v);
-                dataPCM[writingOffset++] = ba[0];
-                dataPCM[writingOffset++] = ba[1];
-            }
-
-            byte encodeNibble(int pcm16)
-            {
-                int delta = pcm16 - predictor;
-                uint value = 0;
-                if (delta < 0)
-                {
-                    value = 8;
-                    delta = -delta;
-                }
-
-                var step = ima_step_table[stepIndex];
-                var diff = step >> 3;
-                if (delta > step)
-                {
-                    value |= 4;
-                    delta -= step;
-                    diff += step;
-                }
-                step >>= 1;
-                if (delta > step)
-                {
-                    value |= 2;
-                    delta -= step;
-                    diff += step;
-                }
-                step >>= 1;
-                if (delta > step)
-                {
-                    value |= 1;
-                    diff += step;
-                }
-
-                predictor += (((value & 8) != 0) ? -diff : diff);
-                predictor = clip(predictor, short.MinValue, short.MaxValue);
-
-                stepIndex += ima_index_table[value & 7];
-                stepIndex = clip(stepIndex, 0, 88);
-
-                return (byte)value;
-            }
-
-            while ((writingOffset < dataPCM.Length) && (sampleCount > 0))
-            {
-                if (bytesInBlock == 0)
-                {
-                    writeInt16((short)stepIndex);
-                    writeInt16((short)predictor);
-                    bytesInBlock = 2044;
-                }
-                else
-                {
-                    var s0 = readSample();
-                    var s1 = readSample();
-                    var b0 = encodeNibble(s0);
-                    var b1 = encodeNibble(s1);
-                    var b = (b0 & 0x0F) + ((b1 & 0x0F) << 4);
-                    dataPCM[writingOffset++] = (byte)b;
-                    bytesInBlock--;
-                    sampleCount -= 2;
-                }
-            }
-
-            return dataPCM;
-        }
-    }
-
-    public class VorbisCodec
-    {
-        public static unsafe byte[] DecodeVorbis(byte[] data, byte[] header1, byte[] header2, byte[] header3)
-        {
-            byte[][] dataPages = BufferSplit(data, 2048);
-
-            vorbis_info info;
-            vorbis_comment comment;
-            vorbis_dsp_state state;
-            vorbis_block vorbis_Block;
-
-            Vorbis.vorbis_info_init(&info);
-            Vorbis.vorbis_comment_init(&comment);
-
-            var infoPacket = new ogg_packet();
-            fixed (byte* bptr = header1)
-            {
-                infoPacket.packet = bptr;
-            }
-
-            infoPacket.bytes = new CLong(header1.Length);
-            infoPacket.b_o_s = new CLong(256);
-            infoPacket.e_o_s = new CLong(0);
-            infoPacket.granulepos = -1;
-            infoPacket.packetno = 0;
-
-            if (Vorbis.vorbis_synthesis_headerin(&info, &comment, &infoPacket) == 1)
-            {
-                throw new Exception("Unable to process info header.");
-            }
-
-            var commentPacket = new ogg_packet();
-            fixed (byte* bptr = header2)
-            {
-                commentPacket.packet = bptr;
-            }
-            commentPacket.bytes = new CLong(header2.Length);
-            commentPacket.b_o_s = new CLong(0);
-            commentPacket.e_o_s = new CLong(0);
-            commentPacket.granulepos = -1;
-            commentPacket.packetno = 0;
-
-            if (Vorbis.vorbis_synthesis_headerin(&info, &comment, &commentPacket) == 1)
-            {
-                throw new Exception("Unable to process comment header.");
-            }
-
-            var codebookPacket = new ogg_packet();
-            fixed (byte* bptr = header3)
-            {
-                codebookPacket.packet = bptr;
-            }
-            codebookPacket.bytes = new CLong(header3.Length);
-            codebookPacket.b_o_s = new CLong(0);
-            codebookPacket.e_o_s = new CLong(0);
-            codebookPacket.granulepos = -1;
-            codebookPacket.packetno = 0;
-
-            if (Vorbis.vorbis_synthesis_headerin(&info, &comment, &codebookPacket) == 1)
-            {
-                throw new Exception("Unable to process codebook header.");
-            }
-
-            var ms = new MemoryStream();
-            var writer = new BinaryWriter(ms);
-
-            if (Vorbis.vorbis_synthesis_init(&state, &info) == 0)
-            {
-                Vorbis.vorbis_block_init(&state, &vorbis_Block);
-                foreach (byte[] page in dataPages)
-                {
-                    var ms2 = new MemoryStream(page);
-                    var reader = new BinaryReader(ms2);
-
-                    if (page[0] == 1 && page[1] == 1 && page[2] == 94)
-                    {
-
-                    }
-
-                    var packetsize = reader.ReadUInt16();
-                    while (packetsize > 0)
-                    {
-                        var workingPacket = new ogg_packet
-                        {
-                            bytes = new CLong(packetsize)
-                        };
-
-                        var bytes = reader.ReadBytes(packetsize);
-                        if (bytes.Length == 0)
-                        {
-                            break;
-                        }
-
-                        fixed (byte* bptr = bytes)
-                        {
-                            workingPacket.packet = bptr;
-                        }
-
-                        workingPacket.b_o_s = new CLong(0);
-                        workingPacket.e_o_s = new CLong(0);
-                        workingPacket.granulepos = -1;
-                        workingPacket.packetno = 0;
-
-                        if (Vorbis.vorbis_synthesis(&vorbis_Block, &workingPacket) == 0)
-                        {
-                            int ret = Vorbis.vorbis_synthesis(&vorbis_Block, &workingPacket);
-                            Vorbis.vorbis_synthesis_blockin(&state, &vorbis_Block);
-
-                            float** pcm;
-                            int samples;
-
-                            while ((samples = Vorbis.vorbis_synthesis_pcmout(&state, &pcm)) > 0)
-                            {
-                                var remaining = samples;
-                                while (remaining > 0)
-                                {
-                                    var toProcess = Math.Min(remaining, 1024);
-                                    int blockSize = sizeof(short) * toProcess * info.channels;
-                                    short* result_ptr = stackalloc short[blockSize / sizeof(short)];
-
-                                    for (int channel = 0; channel < info.channels; channel++)
-                                    {
-                                        short* current = result_ptr + channel;
-                                        float* pcm_channel = pcm[channel];
-
-                                        for (int position = 0; position < toProcess; position++)
-                                        {
-                                            int value = (int)(pcm_channel[position] * 32768.0f);
-                                            if (value > 32767) value = 32767;
-                                            if (value < -32768) value = -32768;
-
-                                            *current = (short)value;
-                                            current += info.channels;
-                                        }
-                                    }
-
-                                    var resultBlock = new byte[blockSize];
-                                    Marshal.Copy((IntPtr)result_ptr, resultBlock, 0, resultBlock.Length);
-                                    writer.Write(resultBlock);
-
-                                    Vorbis.vorbis_synthesis_read(&state, toProcess);
-                                    remaining -= toProcess;
-                                }
-                            }
-                        }
-                        else
-                        {
-                            break;
-                        }
-
-                        if ((reader.BaseStream.Position % 2048 == 0) || reader.BaseStream.Position >= reader.BaseStream.Length)
-                        {
-                            packetsize = 0;
-                            break;
-                        }
-                        packetsize = reader.ReadUInt16();
-                    }
-                }
-
-                Vorbis.vorbis_block_clear(&vorbis_Block);
-                Vorbis.vorbis_dsp_clear(&state);
-            }
-            else
-            {
-                throw new Exception("vorbis_synthesis_init failed");
-            }
-
-            Vorbis.vorbis_comment_clear(&comment);
-            Vorbis.vorbis_info_clear(&info);
-
-            return ms.ToArray();
-        }
-
-        private static byte[][] BufferSplit(byte[] buffer, int blockSize)
-        {
-            byte[][] blocks = new byte[(buffer.Length + blockSize - 1) / blockSize][];
-
-            for (int i = 0, j = 0; i < blocks.Length; i++, j += blockSize)
-            {
-                blocks[i] = new byte[Math.Min(blockSize, buffer.Length - j)];
-                Array.Copy(buffer, j, blocks[i], 0, blocks[i].Length);
-            }
-
-            return blocks;
-        }
-    }
-
     public class AwcXml : MetaXmlBase
     {
         public static string GetXml(AwcFile awc, string outputFolder = "")
         {
-            StringBuilder sb = new StringBuilder();
+            var sb = new StringBuilder();
             sb.AppendLine(XmlHeader);
 
             if (awc != null)
             {
                 AwcFile.WriteXmlNode(awc, sb, 0, outputFolder);
             }
-
             return sb.ToString();
         }
     }
@@ -4115,7 +3467,7 @@ namespace CodeWalker.GameFiles
     {
         public static AwcFile AwcYft(string xml, string inputFolder = "")
         {
-            XmlDocument doc = new XmlDocument();
+            var doc = new XmlDocument();
             doc.LoadXml(xml);
             return GetAwc(doc, inputFolder);
         }
@@ -4123,15 +3475,13 @@ namespace CodeWalker.GameFiles
         public static AwcFile GetAwc(XmlDocument doc, string inputFolder = "")
         {
             AwcFile r = null;
-
             var node = doc.DocumentElement;
+
             if (node != null)
             {
                 r = AwcFile.ReadXmlNode(node, inputFolder);
+                r.Name = Path.GetFileName(inputFolder);
             }
-
-            r.Name = Path.GetFileName(inputFolder);
-
             return r;
         }
     }
