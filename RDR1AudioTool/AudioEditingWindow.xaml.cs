@@ -182,18 +182,18 @@ namespace RDR1AudioTool
                 FileName = Awc.Name
             };
 
-            var dialogResult = dialog.ShowDialog();
-            if (dialogResult == true)
+            if (dialog.ShowDialog() == true)
             {
                 if (Awc.MultiChannelFlag)
                 {
-                    Awc.MultiChannelSource?.CompactMultiChannelSources(Awc.Streams);
+                    Awc.MultiChannelSource?.CompactMultiChannelSources(Awc.AllStreams);
                 }
-                
+
+                var src = Awc.AllStreams ?? Awc.Streams;
                 Awc.BuildPeakChunks();
-                Awc.BuildChunkIndices();
-                Awc.BuildStreamInfos();
-                Awc.BuildStreamDict();
+                Awc.BuildChunkIndices(src);
+                Awc.BuildStreamInfos(src);
+                Awc.BuildStreamDict(src);
                 File.WriteAllBytes(dialog.FileName, Awc.Save());
             }
         }
@@ -391,10 +391,14 @@ namespace RDR1AudioTool
                     if (StreamList.SelectedItems[i] is ItemInfo item)
                     {
                         var pcmdata = window.PcmData;
+                        if (pcmdata == null) continue;
+
                         if (window.StereoInput)
-                        {
                             pcmdata = MixStereoToMono(pcmdata);
-                        }
+
+                        if (window.CodecType == AwcCodecType.OPUS && window.InputChannels == 1)
+                                pcmdata = MonoTo3Channels(pcmdata);
+
                         Awc?.ReplaceAudioStreamSingle(item.Stream.Hash, (uint)window.SampleCount, (uint)window.SampleRate, pcmdata, window.CodecType);
                     }
                 }
@@ -877,6 +881,26 @@ namespace RDR1AudioTool
                 output[outputIndex++] = outSample[1];
             }
             return output;
+        }
+
+        private static byte[] MonoTo3Channels(byte[] monoPcm16)
+        {
+            var samples = monoPcm16.Length / 2;
+            var mono = new short[samples];
+            Buffer.BlockCopy(monoPcm16, 0, mono, 0, monoPcm16.Length);
+
+            var outS = new short[samples * 3];
+            for (int i = 0; i < samples; i++)
+            {
+                short m = mono[i];
+                outS[i * 3 + 0] = m; //Dry
+                outS[i * 3 + 1] = m; //Reverb left
+                outS[i * 3 + 2] = m; //Reverb right
+            }
+
+            var outB = new byte[outS.Length * 2];
+            Buffer.BlockCopy(outS, 0, outB, 0, outB.Length);
+            return outB;
         }
 
         private static byte[] CombineLeftAndRightChannel(byte[] left, byte[] right)

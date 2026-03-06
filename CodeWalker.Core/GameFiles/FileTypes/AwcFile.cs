@@ -53,6 +53,7 @@ namespace CodeWalker.GameFiles
         public AwcChunkInfo[] ChunkInfos { get; set; } // just for browsing convenience really
         public bool WholeFileEncrypted { get; set; }
         public AwcStreamInfo[] StreamInfos { get; set; }
+        public AwcStream[] AllStreams { get; set; }
         public AwcStream[] Streams { get; set; }
         public AwcStream MultiChannelSource { get; set; }
         public Dictionary<uint, AwcStream> StreamDict { get; set; }
@@ -94,6 +95,7 @@ namespace CodeWalker.GameFiles
                 var fn = Path.GetFileNameWithoutExtension(nl);
                 JenkIndex.Ensure(fn + "_left");
                 JenkIndex.Ensure(fn + "_right");
+                JenkIndex.Ensure(fn + "_center");
             }
 
             if ((data == null) || (data.Length < 8))
@@ -203,8 +205,10 @@ namespace CodeWalker.GameFiles
             }
 
             Streams = streams.Where(s => s.DataChunk != null).ToArray();
+            AllStreams = streams.ToArray();
             MultiChannelSource?.AssignMultiChannelSources(Streams);
-            BuildStreamDict();
+
+            BuildStreamDict(AllStreams);
             TestChunkOrdering();
         }
 
@@ -219,7 +223,7 @@ namespace CodeWalker.GameFiles
                 dataOffset += (int)info.ChunkCount * 8;
             }
 
-            var chunks = GetSortedChunks();
+            var chunks = GetSortedChunks(AllStreams);
             DataOffset = dataOffset;
 
             w.Write(Magic);
@@ -319,14 +323,15 @@ namespace CodeWalker.GameFiles
                 }
 
                 Streams = slist.ToArray();
+                AllStreams = slist.ToArray();
                 StreamCount = Streams?.Length ?? 0;
                 MultiChannelSource?.CompactMultiChannelSources(Streams);
             }
 
             BuildPeakChunks();
-            BuildChunkIndices();
-            BuildStreamInfos();
-            BuildStreamDict();
+            BuildChunkIndices(AllStreams);
+            BuildStreamInfos(AllStreams);
+            BuildStreamDict(AllStreams);
         }
 
         public static void WriteXmlNode(AwcFile f, StringBuilder sb, int indent, string wavfolder, string name = "AudioWaveContainer")
@@ -472,58 +477,7 @@ namespace CodeWalker.GameFiles
             }
             else if (targetCodec == AwcCodecType.OPUS)
             {
-                var pcmSamples = new short[pcmAudioData.Length / 2];
-                Buffer.BlockCopy(pcmAudioData, 0, pcmSamples, 0, pcmAudioData.Length);
-
-                var frameSamples = 960; //20ms @ 48kHz
-                var frameSizeBytes = 80;
-                var frames = new List<byte[]>();
-
-                using var encoder = OpusEncoder.Create((int)sampleRate, 1); //2 for stereo
-                encoder.SetBitrate(64000);
-
-                for (int pos = 0; pos < pcmSamples.Length; pos += frameSamples)
-                {
-                    var len = Math.Min(frameSamples, pcmSamples.Length - pos);
-                    var frame = new short[len * 2];
-                    Array.Copy(pcmSamples, pos, frame, 0, len);
-
-                    var packet = encoder.Encode(frame, len);
-                    if (packet.Length < frameSizeBytes)
-                    {
-                        Array.Resize(ref packet, frameSizeBytes); //Pad
-                    }
-                    frames.Add(packet);
-                }
-
-                using var ms = new MemoryStream();
-                using var bw = new BinaryWriter(ms);
-
-                //Block header (per channel, 0x10)
-                bw.Write((uint)0);                              //start_entry
-                bw.Write((uint)frames.Count);                   //entries
-                bw.Write((uint)0);                              //channel_skip
-                bw.Write((uint)(frames.Count * frameSamples));  //channel_samples
-
-                //Extra header (0x70, D11A)
-                bw.Write(0x41313144);                    //"D11A"
-                bw.Write((ushort)frameSizeBytes);        //Bytes per packet
-                bw.Write((ushort)frameSamples);          //PCM samples per frame
-                bw.Write((ushort)0x0101);                //OPUS flags
-                bw.Write((ushort)sampleRate);            //Sample rate
-                bw.Write(0x45313144);                    //"D11E"
-
-                for (int i = 0x10; i < 0x70; i++)
-                {
-                    bw.Write((byte)0x77);
-                }
-
-                //Payload
-                foreach (var f in frames)
-                {
-                    bw.Write(f);
-                }
-                pcmAudioData = ms.ToArray();
+                pcmAudioData = OpusHelper.Encode(pcmAudioData, sampleCount, sampleRate);
             }
 
             AwcStream targetStream = null;
@@ -546,27 +500,26 @@ namespace CodeWalker.GameFiles
                 case AwcCodecType.PCM:
                 case AwcCodecType.ADPCM:
                 case AwcCodecType.MSADPCM:
+                case AwcCodecType.OPUS:
                     ReplacePCM(ref targetStream, sampleCount, sampleRate, pcmAudioData, targetCodec, MultiChannelFlag);
                     break;
                 case AwcCodecType.VORBIS:
                     throw new NotImplementedException("Vorbis support is not implemented");
-                case AwcCodecType.OPUS:
-                    throw new NotImplementedException("OPUS support is not implemented");
                 default:
                     throw new NotImplementedException("This codec is not implemented");
             }
         }
 
-        public static void ReplacePCM(ref AwcStream stream, uint sampleCount, uint sampleRate, byte[] pcmAudioData, AwcCodecType codecType, bool isMultiChannel = false)
+        public void ReplacePCM(ref AwcStream stream, uint sampleCount, uint sampleRate, byte[] pcmAudioData, AwcCodecType codecType, bool isMultiChannel = false)
         {
             if (stream.VorbisChunk != null)
             {
                 stream.VorbisChunk = null;
             }
 
-            if (!isMultiChannel)
+            if (!isMultiChannel && codecType != AwcCodecType.OPUS)
             {
-                var fmtChunk = (AwcFormatChunk)stream.Chunks.Where(c => c.GetType() == typeof(AwcFormatChunk)).FirstOrDefault();
+                var fmtChunk = (AwcFormatChunk)stream.Chunks.Where(c => c.GetType() == typeof(AwcFormatChunk));
                 if (fmtChunk != null)
                 {
                     fmtChunk.Samples = sampleCount;
@@ -576,13 +529,49 @@ namespace CodeWalker.GameFiles
             }
             else
             {
-                stream.StreamFormat.Samples = sampleCount;
-                stream.StreamFormat.SamplesPerSecond = (ushort)sampleRate;
-                stream.StreamFormat.Codec = codecType;
+                UpdateAllFormatChunksForMultichannel(sampleCount, sampleRate, codecType);
             }
 
             stream.DataChunk ??= new AwcDataChunk(new AwcChunkInfo() { Type = AwcChunkType.data });
             stream.DataChunk.Data = pcmAudioData;
+        }
+
+        public void UpdateAllFormatChunksForMultichannel(uint sampleCount, uint sampleRate, AwcCodecType codecType)
+        {
+            if (MultiChannelSource != null)
+            {
+                MultiChannelSource.StreamFormat.Samples = sampleCount;
+                MultiChannelSource.StreamFormat.SamplesPerSecond = (ushort)sampleRate;
+                MultiChannelSource.StreamFormat.Codec = codecType;
+            }
+
+            var src = AllStreams ?? Streams;
+            if (src == null) return;
+
+            foreach (var s in src)
+            {
+                if (s?.Chunks == null) continue;
+                foreach (var c in s.Chunks)
+                {
+                    if (c is AwcFormatChunk fmt)
+                    {
+                        fmt.Samples = sampleCount;
+                        fmt.SamplesPerSecond = (ushort)sampleRate;
+                        fmt.Codec = codecType;
+                    }
+
+                    if (c is AwcStreamFormatChunk sfc)
+                    {
+                        for (int i = 0; i < sfc.ChannelCount; i++)
+                        {
+                            var channel = sfc.Channels[i];
+                            channel.Samples = sampleCount;
+                            channel.SamplesPerSecond = (ushort)sampleRate;
+                            channel.Codec = codecType;
+                        }
+                    }
+                }
+            }
         }
 
         public static void ReplaceVorbis(ref AwcStream stream, uint sampleCount, uint sampleRate, byte[] audioData, byte[] streamIdData, byte[] commentData, byte[] codebookData, bool isMultiChannel = false)
@@ -659,17 +648,15 @@ namespace CodeWalker.GameFiles
             stream.DataChunk.Data = audioData;
         }
 
-        public AwcChunk[] GetSortedChunks()
+        public AwcChunk[] GetSortedChunks(AwcStream[] src)
         {
             var chunks = new List<AwcChunk>();
-            if (Streams != null)
+            if (src != null)
             {
-                foreach (var stream in Streams)
+                foreach (var stream in src)
                 {
-                    if (stream.Chunks != null)
-                    {
+                    if (stream?.Chunks != null)
                         chunks.AddRange(stream.Chunks);
-                    }
                 }
             }
 
@@ -841,42 +828,39 @@ namespace CodeWalker.GameFiles
             }
         }
 
-        public void BuildChunkIndices()
+        public void BuildChunkIndices(AwcStream[] src)
         {
-            if (Streams == null) return;
+            if (src == null) return;
 
             var inds = new List<ushort>();
             ushort ind = 0;
 
-            foreach (var stream in Streams)
+            foreach (var stream in src)
             {
                 inds.Add(ind);
                 ind += (ushort)(stream.Chunks?.Length ?? 0);
             }
 
-            if (ChunkIndicesFlag)
-                ChunkIndices = inds.ToArray();
-            else
-                ChunkIndices = null;
+            ChunkIndices = ChunkIndicesFlag ? inds.ToArray() : null;
         }
 
-        public void BuildStreamInfos()
+        public void BuildStreamInfos(AwcStream[] src)
         {
             var streaminfos = new List<AwcStreamInfo>();
             var chunkinfos = new List<AwcChunkInfo>();
 
-            if (Streams != null)
+            if (src != null)
             {
-                var streamCount = Streams.Length;
+                var streamCount = src.Length;
                 var infoStart = 16 + (ChunkIndicesFlag ? (streamCount * 2) : 0);
                 var dataOffset = infoStart + streamCount * 4;
 
-                foreach (var stream in Streams)
+                foreach (var stream in src)
                 {
                     dataOffset += (stream?.Chunks?.Length ?? 0) * 8;
                 }
 
-                var chunks = GetSortedChunks();
+                var chunks = GetSortedChunks(src);
                 foreach (var chunk in chunks)
                 {
                     var chunkinfo = chunk.ChunkInfo;
@@ -894,7 +878,7 @@ namespace CodeWalker.GameFiles
                     dataOffset += size;
                 }
 
-                foreach (var stream in Streams)
+                foreach (var stream in src)
                 {
                     var streaminfo = stream.StreamInfo;
                     streaminfos.Add(streaminfo);
@@ -915,12 +899,12 @@ namespace CodeWalker.GameFiles
             StreamInfos = streaminfos.ToArray();
         }
 
-        public void BuildStreamDict()
+        public void BuildStreamDict(AwcStream[] src)
         {
             StreamDict = new Dictionary<uint, AwcStream>();
-            if (Streams == null) return;
+            if (src == null) return;
 
-            foreach (var stream in Streams)
+            foreach (var stream in src)
             {
                 StreamDict[stream.Hash] = stream;
             }

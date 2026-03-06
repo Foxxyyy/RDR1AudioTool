@@ -18,6 +18,7 @@ namespace RDR1AudioTool
         public byte[]? PcmData = null;
         public int SampleCount = 0;
         public int SampleRate = 0;
+        public int InputChannels = 1;
         public bool StereoInput = false;
 
         public ReplaceAudioWindow(bool multiChannelFlag = false)
@@ -124,26 +125,28 @@ namespace RDR1AudioTool
         private void ReadWavFile(string fileName)
         {
             var wavFile = new WaveFileReader(fileName);
-            if (wavFile.WaveFormat.Encoding != WaveFormatEncoding.Pcm && wavFile.WaveFormat.Encoding != WaveFormatEncoding.Adpcm)
+            var fmt = wavFile.WaveFormat;
+
+            if (fmt.Encoding != WaveFormatEncoding.Pcm && fmt.Encoding != WaveFormatEncoding.Adpcm)
             {
-                MessageBox.Show("PCM wav files are only accepted.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("Only PCM/ADPCM wav files are accepted.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            if (wavFile.WaveFormat.Channels > 2)
+
+            var ch = fmt.Channels;
+            int maxCh = (CodecType == AwcCodecType.OPUS) ? 3 : 2;
+
+            if (ch < 1 || ch > maxCh)
             {
-                MessageBox.Show("Wav file has too many channels.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show($"Wav file has {ch} channels. Max allowed for {CodecType} is {maxCh}.", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             PcmData = EncodeIfNeeded(wavFile);
-            SampleRate = wavFile.WaveFormat.SampleRate;
-            
-            if (wavFile.WaveFormat.Channels == 2)
-            {
-                StereoInput = true;
-            }
-
-            SampleCount = (PcmData != null) ? PcmData.Length / (2 * wavFile.WaveFormat.Channels) : 0;
+            SampleRate = fmt.SampleRate;
+            InputChannels = ch;
+            StereoInput = fmt.Channels == 2;
+            SampleCount = (PcmData != null) ? PcmData.Length / (2 * ch) : 0;
         }
 
         private void ReadMp3File(string fileName)
@@ -238,19 +241,30 @@ namespace RDR1AudioTool
                     return ms.ToArray();
                 }
             }
-            else if (CodecType == AwcCodecType.OPUS)
+            else if (CodecType == AwcCodecType.OPUS) //Correct?
             {
-                var format = new WaveFormat(reader.WaveFormat.SampleRate, 16, reader.WaveFormat.Channels);
-                using var resampler = new MediaFoundationResampler(reader, format);
+                var targetRate = 48000;
+                var format = new WaveFormat(targetRate, 16, reader.WaveFormat.Channels);
+
+                //Convert ADPCM to PCM if needed
+                IWaveProvider source = reader;
+                if (reader.WaveFormat.Encoding != WaveFormatEncoding.Pcm && reader.WaveFormat.Encoding != WaveFormatEncoding.IeeeFloat)
+                {
+                    source = WaveFormatConversionStream.CreatePcmStream(reader as WaveStream);
+                }
+
+                using var resampler = new MediaFoundationResampler(source, format);
                 using var ms = new MemoryStream();
                 
-                var array = new byte[format.AverageBytesPerSecond];
-                var num = 0;
+                var buffer = new byte[format.AverageBytesPerSecond]; //1sec chunks
+                var read = 0;
 
-                while ((num = resampler.Read(array, 0, array.Length)) > 0)
+                while ((read = resampler.Read(buffer, 0, buffer.Length)) > 0)
                 {
-                    ms.Write(array, 0, num);
+                    ms.Write(buffer, 0, read);
                 }
+
+                SampleRate = targetRate; //Update sample rate to match what we resampled to
                 return ms.ToArray();
             }
             return null;
